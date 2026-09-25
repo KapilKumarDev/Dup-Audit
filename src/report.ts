@@ -1,0 +1,99 @@
+import type { Coverage } from './coverage.js';
+import type { CloneCluster, DetectorId, Failure, Location } from './types.js';
+
+export interface Gate {
+  limit: number;
+  actual: number;
+  passed: boolean;
+}
+
+export interface AuditReport {
+  generatedAt: string;
+  root: string;
+  coverage: Coverage;
+  duplication: {
+    percent: number;
+    duplicatedLines: number;
+    clusterCount: number;
+    clustersByDetector: Partial<Record<DetectorId, number>>;
+  };
+  excluded: { files: number; lines: number };
+  failures: Failure[];
+  notes: string[];
+  gates: { coverage: Gate; duplication: Gate };
+  clusters: CloneCluster[];
+}
+
+const SUMMARY_CLUSTER_LIMIT = 10;
+
+const formatPercent = (value: number): string => `${value.toFixed(1)}%`;
+const formatLocation = ({ path, startLine, endLine }: Location): string => `${path}:${startLine}-${endLine}`;
+const gateLabel = (gate: Gate): string => (gate.passed ? 'PASS' : 'FAIL');
+
+export function formatSummary(report: AuditReport, outputDir: string): string {
+  const { coverage, duplication, gates, excluded } = report;
+  const lines = [
+    `dup-audit: ${report.root}`,
+    `Coverage:    ${formatPercent(coverage.percent)} (${coverage.coveredLines}/${coverage.totalLines} lines), needs >= ${gates.coverage.limit}%: ${gateLabel(gates.coverage)}`,
+    `Duplication: ${formatPercent(duplication.percent)} (${duplication.duplicatedLines} lines in ${duplication.clusterCount} clusters), allows <= ${gates.duplication.limit}%: ${gateLabel(gates.duplication)}`,
+  ];
+
+  const detectors = Object.entries(duplication.clustersByDetector).map(([id, count]) => `${id}: ${count}`);
+  if (detectors.length > 0) lines.push(`  by detector  ${detectors.join(', ')}`);
+
+  const uncovered = Object.entries(coverage.uncoveredLinesByExtension).map(([ext, count]) => `${ext}: ${count}`);
+  if (uncovered.length > 0) lines.push(`  uncovered lines  ${uncovered.join(', ')}`);
+  if (excluded.files > 0) lines.push(`  excluded by config  ${excluded.files} files (${excluded.lines} lines)`);
+  for (const failure of report.failures) lines.push(`  could not analyze ${failure.path}: ${failure.message}`);
+  for (const note of report.notes) lines.push(`  note: ${note}`);
+
+  if (report.clusters.length > 0) {
+    lines.push('', `Largest clusters (${Math.min(SUMMARY_CLUSTER_LIMIT, report.clusters.length)} of ${report.clusters.length}):`);
+    for (const cluster of report.clusters.slice(0, SUMMARY_CLUSTER_LIMIT)) {
+      lines.push(
+        `  [${cluster.detector}/${cluster.kind} ${formatPercent(cluster.similarity * 100)}] ${cluster.locations.map(formatLocation).join('  <->  ')}`,
+      );
+    }
+  }
+  lines.push('', `Reports: ${outputDir}`);
+  return lines.join('\n');
+}
+
+const RULE_DESCRIPTIONS: Record<DetectorId, string> = {
+  tokens: 'Identical token sequence found in more than one place',
+  structure: 'Function-level structural clone (identical, renamed, or near-miss)',
+  css: 'CSS rule with identical or near-identical declarations',
+};
+
+const physicalLocation = ({ path, startLine, endLine }: Location) => ({
+  physicalLocation: { artifactLocation: { uri: path }, region: { startLine, endLine } },
+});
+
+export function toSarif(report: AuditReport): unknown {
+  return {
+    $schema: 'https://json.schemastore.org/sarif-2.1.0.json',
+    version: '2.1.0',
+    runs: [
+      {
+        tool: {
+          driver: {
+            name: 'dup-audit',
+            rules: Object.entries(RULE_DESCRIPTIONS).map(([id, text]) => ({
+              id: `dup-audit/${id}`,
+              shortDescription: { text },
+            })),
+          },
+        },
+        results: report.clusters.map((cluster) => ({
+          ruleId: `dup-audit/${cluster.detector}`,
+          level: 'warning',
+          message: {
+            text: `${cluster.kind} clone across ${cluster.locations.length} locations (similarity ${formatPercent(cluster.similarity * 100)})`,
+          },
+          locations: [physicalLocation(cluster.locations[0])],
+          relatedLocations: cluster.locations.slice(1).map((location, index) => ({ id: index + 1, ...physicalLocation(location) })),
+        })),
+      },
+    ],
+  };
+}
