@@ -101,6 +101,7 @@ export function createCssDetector(settings: Config['css']): Detector {
             locations: cluster.members.map((rule) => rule.location).sort(compareLocations),
           }),
         ),
+        deadCode: [],
         analyzed,
         failures,
         notes: [],

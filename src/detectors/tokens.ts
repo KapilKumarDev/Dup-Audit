@@ -81,6 +81,7 @@ export function createTokenDetector(
             locations: [toLocation(root, known, clone.duplicationA), toLocation(root, known, clone.duplicationB)],
           }),
         ),
+        deadCode: [],
         analyzed: selected.map((file) => file.path),
         failures: [],
         notes:

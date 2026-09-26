@@ -4,7 +4,7 @@ import type { DetectorId } from './types.js';
 
 export const CONFIG_FILE = 'dup-audit.config.json';
 
-const DETECTOR_IDS: readonly DetectorId[] = ['tokens', 'structure', 'css'];
+const DETECTOR_IDS: readonly DetectorId[] = ['tokens', 'structure', 'css', 'deadcode'];
 
 export interface Config {
   detectors: DetectorId[];
@@ -15,6 +15,8 @@ export interface Config {
   gates: {
     minCoveragePercent: number;
     maxDuplicationPercent: number;
+    /** Off by default (same adoption problem as `baseline`): a wrong entry point can flag live code as dead. */
+    deadCode: { enabled: boolean; maxFiles: number };
   };
   tokens: {
     /** Extensions handed to the token-level detector (jscpd). */
@@ -38,6 +40,26 @@ export interface Config {
     minDeclarations: number;
     similarity: number;
   };
+  deadcode: {
+    /**
+     * Glob patterns (relative to root, POSIX-style) for the program's real entry points - the files that
+     * are run directly rather than only imported. Empty means "auto-detect": package.json `main`/`bin`/
+     * `exports`, then a conventional root-level index/main/cli file if none of those resolve. The
+     * resolved list is always reported, since a wrong entry point is the one way this detector can flag
+     * live code as dead.
+     */
+    entry: string[];
+    /** Extra glob patterns for files this detector should never flag, e.g. framework files loaded by filename convention rather than by import. */
+    ignore: string[];
+    /**
+     * Also treat any file among the ones actually audited whose path looks like a test
+     * (`.test.`, `.spec.`, or under `__tests__/`) as an entry point in its own right, the way a test
+     * runner invokes it directly. Only takes effect for test files that are NOT already removed by the
+     * top-level `ignore` list before detectors run; the default `ignore` removes them, so this is only
+     * useful once you've deliberately kept test files in the audited set.
+     */
+    treatTestsAsEntry: boolean;
+  };
   baseline: {
     /**
      * When true, `<out>/baseline.json` (written by `dup-audit baseline`) is loaded and the
@@ -50,7 +72,7 @@ export interface Config {
 }
 
 export const DEFAULT_CONFIG: Config = {
-  detectors: ['tokens', 'structure', 'css'],
+  detectors: ['tokens', 'structure', 'css', 'deadcode'],
   ignore: [
     '**/node_modules/**',
     '**/dist/**',
@@ -71,7 +93,7 @@ export const DEFAULT_CONFIG: Config = {
     '.sql', '.html', '.htm',
     '.vue', '.svelte',
   ],
-  gates: { minCoveragePercent: 90, maxDuplicationPercent: 5 },
+  gates: { minCoveragePercent: 90, maxDuplicationPercent: 5, deadCode: { enabled: false, maxFiles: 0 } },
   tokens: {
     extensions: ['.ts', '.tsx', '.js', '.jsx', '.css', '.scss', '.less', '.sql', '.html', '.htm'],
     minTokens: 60,
@@ -86,6 +108,7 @@ export const DEFAULT_CONFIG: Config = {
     maxPosting: 64,
   },
   css: { minDeclarations: 3, similarity: 0.85 },
+  deadcode: { entry: [], ignore: [], treatTestsAsEntry: false },
   baseline: { enabled: false },
 };
 
@@ -134,6 +157,10 @@ function validate(config: Config): void {
   expect(extensions(config.tokens.extensions), 'tokens.extensions entries must look like ".ts"');
   expect(percent(config.gates.minCoveragePercent), 'gates.minCoveragePercent must be within 0..100');
   expect(percent(config.gates.maxDuplicationPercent), 'gates.maxDuplicationPercent must be within 0..100');
+  expect(
+    Number.isInteger(config.gates.deadCode.maxFiles) && config.gates.deadCode.maxFiles >= 0,
+    'gates.deadCode.maxFiles must be a non-negative integer',
+  );
   expect(positiveInt(config.tokens.minTokens), 'tokens.minTokens must be a positive integer');
   expect(positiveInt(config.tokens.minLines), 'tokens.minLines must be a positive integer');
   expect(positiveInt(config.structure.minNodes), 'structure.minNodes must be a positive integer');

@@ -1,8 +1,9 @@
 # Dup-Audit
 
-A deterministic, non-AI duplicate-code auditor for TypeScript, JavaScript, CSS,
-and (via token matching) PL/pgSQL. Built to run unattended in CI: every run
-verifies its own code coverage and gates on a duplication budget.
+A deterministic, non-AI code auditor for TypeScript, JavaScript, CSS, and (via
+token matching) PL/pgSQL: duplicate-code detection plus whole-program
+dead-code reachability. Built to run unattended in CI: every run verifies its
+own code coverage and gates on a duplication budget.
 
 ## What it finds
 
@@ -11,6 +12,11 @@ verifies its own code coverage and gates on a duplication budget.
 | `structure` | Type-1/2/3 clones in functions and methods (TS/TSX/JS/JSX)         | TypeScript compiler AST, normalized, confirmed with Zhang-Shasha tree edit distance |
 | `css`       | Duplicate or near-duplicate CSS rules, any declaration order       | PostCSS, normalized declaration sets, Jaccard similarity |
 | `tokens`    | Verbatim duplication in any configured extension (incl. `.sql`)    | jscpd |
+| `deadcode`  | Files and exports unreachable from any real entry point (TS/TSX/JS/JSX) | Whole-program import graph, reachability from entry points (mark-and-sweep) |
+
+`deadcode` isn't a duplication detector — it doesn't compare code against
+other code, it asks "does anything alive actually reach this?" See
+[Dead-code detection](#dead-code-detection) below.
 
 Type-4 (same behavior, different code) is not attempted — this is undecidable
 in general and no static tool covers it reliably.
@@ -42,6 +48,54 @@ Defaults are chosen from published clone-detection practice, not guesses:
 None of this guarantees zero false positives — no tool can, since some
 identical-looking code is intentionally identical (see Limitations). It's
 tuned to keep them rare, and `calibrate` measures where you actually land.
+
+## Dead-code detection
+
+A shallow "does anything import this file?" check gets the interesting case
+wrong: if `dead.ts` imports `helper.ts`, that check sees `helper.ts` is
+imported and calls it live — even though `dead.ts` itself is never reached by
+anything the program actually runs. The same failure shows up as **mutually
+recursive dead code**: two files that import each other but that nothing else
+ever reaches. This is a documented shortcoming of `ts-prune` ("couldn't
+detect mutually recursive dead code"), and the reason its successor `knip`
+(and `unimported`, `depcheck`) moved to whole-graph reachability from real
+entry points instead. `deadcode` follows the same model:
+
+1. Build the whole-program import graph: every `import`, `export … from`,
+   `require(...)`, and dynamic `import(...)` becomes an edge, resolved the
+   way Node/TypeScript actually resolve specifiers (extensionless imports,
+   `.js`-written/`.ts`-compiled NodeNext style, directory `index` files).
+2. Resolve real entry points — files that *run*, not just get imported:
+   `package.json`'s `main`/`bin`/`exports`, an explicit `deadcode.entry` glob
+   list, or a conventional root `index`/`main`/`cli` file as a last resort.
+   **This list is always in the run's notes.** A wrong entry point is the one
+   way this detector can flag live code as dead, so it's never assumed
+   silently — if it can't resolve any, it reports nothing and says so.
+3. Breadth-first search from those entry points only, over the whole graph.
+   A file only reachable *through* another unreachable file is still
+   unreachable — this is what fixes the `dead.ts`/`helper.ts` case above.
+4. Anything the search never reaches is a **dead file**. For files it does
+   reach, any exported name that no *reachable* importer ever asks for is a
+   **dead export** (an import written inside a dead file doesn't count as
+   usage, which is what keeps step 3's fix from being undone here).
+5. A computed reference (`require(pluginPath)`) can't be resolved
+   statically. When one exists anywhere and a literal string elsewhere
+   plausibly names a candidate, the finding is downgraded to
+   `uncertain-file`/`uncertain-export` — always reported, never gated.
+
+Known scope boundaries: only script files get reachability (CSS/SQL aren't
+attempted — a different, harder problem); test files don't count as entry
+points by default, since the shared `ignore` list removes them before any
+detector runs (`deadcode.treatTestsAsEntry` opts back in once you've
+deliberately kept them audited); and `import * as ns` conservatively marks
+every export of its target as used rather than tracking which property is
+actually read off `ns`, trading a few missed dead exports for zero false
+positives on that path.
+
+Like `baseline`, the gate is opt-in (`gates.deadCode.enabled`, default
+`false`) and only counts high-confidence `dead-file` findings — a brand-new,
+whole-codebase-scanning check shouldn't break anyone's CI on the first
+upgrade.
 
 ## Install
 
@@ -82,8 +136,11 @@ from "couldn't run".
 Drop a `dup-audit.config.json` in the root (or pass `--config`). Every key is
 optional and validated; unknown keys are rejected so a typo can't silently
 disable a check. See `src/config.ts` for the full schema and defaults —
-worth reading before tuning, since `gates.minCoveragePercent` and
-`gates.maxDuplicationPercent` are what CI actually enforces.
+worth reading before tuning, since `gates.minCoveragePercent`,
+`gates.maxDuplicationPercent`, and `gates.deadCode` are what CI actually
+enforces. `deadcode.entry` (real entry points), `deadcode.ignore`, and
+`deadcode.treatTestsAsEntry` are worth setting explicitly rather than relying
+on auto-detection — see [Dead-code detection](#dead-code-detection).
 
 ## Calibrating for your codebase
 
@@ -169,6 +226,19 @@ malformed CSS rule, for instance) counts as uncovered and is listed in
   raise or lower `structure.maxTedNodes` per project via
   `dup-audit.config.json` if your codebase's real functions run larger or
   you need faster runs on very large repos.
+- **Dead-code reachability is script-only.** CSS rules never referenced by
+  any markup, or unused SQL objects, aren't attempted — that needs
+  cross-referencing against markup/templates or a database's own dependency
+  graph, a different problem from import-graph reachability.
+- **Test-only-used code is still flagged as dead** by default, since test
+  files are removed from the audited set by the shared `ignore` list before
+  any detector runs and so can't count as entry points. Set
+  `deadcode.treatTestsAsEntry: true` if you've deliberately kept test files
+  in the audited set and want them to count.
+- **A wrong `deadcode.entry`** is the one way this detector can flag real,
+  live code as dead — the resolved entry points are always in `report.notes`
+  precisely so this is checkable, not something to find out from a bad gate
+  failure.
 
 ## Development
 
@@ -179,4 +249,7 @@ npm test           # type-checks and runs the full test suite (node --test)
 83 tests cover the tree edit distance algorithm (including a brute-force
 cross-check on random trees), clustering, every detector, coverage
 accounting, config validation, the merge/de-duplication logic, baseline
-fingerprinting, and the CLI's exit codes end-to-end.
+fingerprinting, and the CLI's exit codes end-to-end. `test/deadcode.test.ts`
+adds coverage for the dead-code detector specifically: the transitive
+dead-file case, mutual recursion, dead exports, barrel re-exports, and the
+uncertain-confidence downgrade — run `npm test` for the current total.

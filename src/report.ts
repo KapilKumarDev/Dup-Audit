@@ -1,5 +1,5 @@
 import type { Coverage } from './coverage.js';
-import type { CloneCluster, DetectorId, Failure, Location } from './types.js';
+import type { CloneCluster, DeadCodeFinding, DetectorId, Failure, Location } from './types.js';
 
 export interface Gate {
   limit: number;
@@ -19,10 +19,18 @@ export interface AuditReport {
     /** Present when config.baseline.enabled: the gate is evaluated against newPercent, not percent. */
     baseline?: { baselinedClusterCount: number; newClusterCount: number; newPercent: number };
   };
+  /** High-confidence counts gate the build (when enabled); 'uncertain*' findings never do - see detectors/deadcode.ts. */
+  deadCode: {
+    findings: DeadCodeFinding[];
+    deadFileCount: number;
+    deadExportCount: number;
+    uncertainFileCount: number;
+    uncertainExportCount: number;
+  };
   excluded: { files: number; lines: number };
   failures: Failure[];
   notes: string[];
-  gates: { coverage: Gate; duplication: Gate };
+  gates: { coverage: Gate; duplication: Gate; deadCode: Gate };
   clusters: CloneCluster[];
 }
 
@@ -33,11 +41,14 @@ const formatLocation = ({ path, startLine, endLine }: Location): string => `${pa
 const gateLabel = (gate: Gate): string => (gate.passed ? 'PASS' : 'FAIL');
 
 export function formatSummary(report: AuditReport, outputDir: string): string {
-  const { coverage, duplication, gates, excluded } = report;
+  const { coverage, duplication, deadCode, gates, excluded } = report;
+  const uncertain = deadCode.uncertainFileCount + deadCode.uncertainExportCount;
   const lines = [
     `dup-audit: ${report.root}`,
     `Coverage:    ${formatPercent(coverage.percent)} (${coverage.coveredLines}/${coverage.totalLines} lines), needs >= ${gates.coverage.limit}%: ${gateLabel(gates.coverage)}`,
     `Duplication: ${formatPercent(duplication.percent)} (${duplication.duplicatedLines} lines in ${duplication.clusterCount} clusters), allows <= ${gates.duplication.limit}%: ${gateLabel(gates.duplication)}`,
+    `Dead code:   ${deadCode.deadFileCount} file(s), ${deadCode.deadExportCount} export(s), allows <= ${gates.deadCode.limit} file(s): ${gateLabel(gates.deadCode)}` +
+      (uncertain > 0 ? ` (+${uncertain} uncertain, never gated)` : ''),
   ];
 
   const detectors = Object.entries(duplication.clustersByDetector).map(([id, count]) => `${id}: ${count}`);
@@ -63,6 +74,13 @@ export function formatSummary(report: AuditReport, outputDir: string): string {
       );
     }
   }
+  if (deadCode.findings.length > 0) {
+    lines.push('', `Dead code (${Math.min(SUMMARY_CLUSTER_LIMIT, deadCode.findings.length)} of ${deadCode.findings.length}):`);
+    for (const finding of deadCode.findings.slice(0, SUMMARY_CLUSTER_LIMIT)) {
+      lines.push(`  [${finding.kind}] ${formatLocation(finding.location)} - ${finding.reason}`);
+    }
+  }
+
   lines.push('', `Reports: ${outputDir}`);
   return lines.join('\n');
 }
@@ -71,6 +89,7 @@ const RULE_DESCRIPTIONS: Record<DetectorId, string> = {
   tokens: 'Identical token sequence found in more than one place',
   structure: 'Function-level structural clone (identical, renamed, or near-miss)',
   css: 'CSS rule with identical or near-identical declarations',
+  deadcode: 'File or export unreachable from any configured entry point',
 };
 
 const physicalLocation = ({ path, startLine, endLine }: Location) => ({
@@ -92,15 +111,23 @@ export function toSarif(report: AuditReport): unknown {
             })),
           },
         },
-        results: report.clusters.map((cluster) => ({
-          ruleId: `dup-audit/${cluster.detector}`,
-          level: 'warning',
-          message: {
-            text: `${cluster.kind} clone across ${cluster.locations.length} locations (similarity ${formatPercent(cluster.similarity * 100)})`,
-          },
-          locations: [physicalLocation(cluster.locations[0])],
-          relatedLocations: cluster.locations.slice(1).map((location, index) => ({ id: index + 1, ...physicalLocation(location) })),
-        })),
+        results: [
+          ...report.clusters.map((cluster) => ({
+            ruleId: `dup-audit/${cluster.detector}`,
+            level: 'warning',
+            message: {
+              text: `${cluster.kind} clone across ${cluster.locations.length} locations (similarity ${formatPercent(cluster.similarity * 100)})`,
+            },
+            locations: [physicalLocation(cluster.locations[0])],
+            relatedLocations: cluster.locations.slice(1).map((location, index) => ({ id: index + 1, ...physicalLocation(location) })),
+          })),
+          ...report.deadCode.findings.map((finding) => ({
+            ruleId: 'dup-audit/deadcode',
+            level: finding.kind.startsWith('uncertain') ? 'note' : 'warning',
+            message: { text: `${finding.kind}: ${finding.reason}` },
+            locations: [physicalLocation(finding.location)],
+          })),
+        ],
       },
     ],
   };

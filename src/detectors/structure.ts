@@ -325,6 +325,7 @@ export function createStructureDetector(settings: Config['structure']): Detector
             locations: cluster.members.map((unit) => unit.location).sort(compareLocations),
           }),
         ),
+        deadCode: [],
         analyzed,
         failures: [],
         notes,

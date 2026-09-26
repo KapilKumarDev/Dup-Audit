@@ -3,6 +3,7 @@ import { BASELINE_FILE, loadBaseline, splitAgainstBaseline } from './baseline.js
 import type { Config } from './config.js';
 import { computeCoverage } from './coverage.js';
 import { createCssDetector } from './detectors/css.js';
+import { createDeadCodeDetector } from './detectors/deadcode.js';
 import { createStructureDetector } from './detectors/structure.js';
 import { createTokenDetector } from './detectors/tokens.js';
 import { collectInventory } from './inventory.js';
@@ -29,6 +30,7 @@ export function createDetectors(root: string, config: Config): Detector[] {
     tokens: () => createTokenDetector(root, config.tokens),
     structure: () => createStructureDetector(config.structure),
     css: () => createCssDetector(config.css),
+    deadcode: () => createDeadCodeDetector(root, config.deadcode),
   };
   return config.detectors.map((id) => factories[id]());
 }
@@ -50,6 +52,9 @@ export async function runAudit(root: string, config: Config, options: RunAuditOp
 
   const analyzed = new Set(results.flatMap((result) => result.analyzed));
   const coverage = computeCoverage(inventory.files, analyzed);
+
+  const deadCode = results.flatMap((result) => result.deadCode);
+  const deadFileCount = deadCode.filter((finding) => finding.kind === 'dead-file').length;
 
   const found = results.flatMap((result) => result.clusters);
   const structural = found.filter((cluster) => cluster.detector !== 'tokens');
@@ -82,6 +87,10 @@ export async function runAudit(root: string, config: Config, options: RunAuditOp
   const gates = {
     coverage: gate(config.gates.minCoveragePercent, coverage.percent, (actual, limit) => actual >= limit),
     duplication: gate(config.gates.maxDuplicationPercent, gatedDuplicationPercent, (actual, limit) => actual <= limit),
+    // Off by default and evaluated against high-confidence findings only: 'uncertain-file' never fails the build.
+    deadCode: config.gates.deadCode.enabled
+      ? gate(config.gates.deadCode.maxFiles, deadFileCount, (actual, limit) => actual <= limit)
+      : gate(config.gates.deadCode.maxFiles, deadFileCount, () => true),
   };
 
   const report: AuditReport = {
@@ -102,8 +111,19 @@ export async function runAudit(root: string, config: Config, options: RunAuditOp
     notes: results.flatMap((result) => result.notes),
     gates,
     clusters,
+    deadCode: {
+      findings: deadCode,
+      deadFileCount,
+      deadExportCount: deadCode.filter((finding) => finding.kind === 'dead-export').length,
+      uncertainFileCount: deadCode.filter((finding) => finding.kind === 'uncertain-file').length,
+      uncertainExportCount: deadCode.filter((finding) => finding.kind === 'uncertain-export').length,
+    },
   };
-  return { report, passed: gates.coverage.passed && gates.duplication.passed, files: inventory.files };
+  return {
+    report,
+    passed: gates.coverage.passed && gates.duplication.passed && gates.deadCode.passed,
+    files: inventory.files,
+  };
 }
 
 function gate(limit: number, actual: number, passes: (actual: number, limit: number) => boolean): Gate {

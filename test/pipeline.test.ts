@@ -13,10 +13,15 @@ import { FORMAT_LABEL, makeRepo, ORDER_TOTAL, ORDER_TOTAL_RENAMED } from './help
 const CARD = `.card {\n  display: flex;\n  padding: 8px 16px;\n  border: 1px solid #ccc;\n}\n`;
 const CLI = fileURLToPath(new URL('../src/cli.js', import.meta.url));
 
-const config = (overrides: Partial<typeof DEFAULT_CONFIG> = {}) => ({
+type ConfigOverrides = Omit<Partial<typeof DEFAULT_CONFIG>, 'gates'> & {
+  gates?: Partial<typeof DEFAULT_CONFIG.gates>;
+};
+
+const config = (overrides: ConfigOverrides = {}) => ({
   ...structuredClone(DEFAULT_CONFIG),
   detectors: ['structure', 'css'] as typeof DEFAULT_CONFIG.detectors,
   ...overrides,
+  gates: { ...DEFAULT_CONFIG.gates, ...overrides.gates },
 });
 
 const repoFiles = {
