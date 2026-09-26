@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
+import { buildBaseline } from '../src/baseline.js';
 import { CONFIG_FILE, DEFAULT_CONFIG } from '../src/config.js';
 import { createDetectors, runAudit } from '../src/pipeline.js';
 import { toSarif } from '../src/report.js';
@@ -39,6 +40,7 @@ describe('runAudit', () => {
     assert.ok(report.duplication.percent > 0 && report.duplication.percent < 100);
     assert.equal(passed, true);
     assert.equal(report.clusters[0].detector, 'structure', 'largest saving first');
+    assert.equal(report.duplication.baseline, undefined, 'baseline.enabled defaults to false');
   });
 
   it('fails the coverage gate when code is left unexamined, and names the gap', async () => {
@@ -63,6 +65,28 @@ describe('runAudit', () => {
     assert.equal(report.failures.length, 1);
     assert.equal(report.failures[0].path, 'src/broken.css');
     assert.ok(report.coverage.uncoveredLinesByExtension['.css'] > 0);
+  });
+
+  it('gates only on clusters outside a recorded baseline, while still reporting every cluster', async () => {
+    const root = makeRepo(repoFiles);
+    const outputDir = path.join(root, 'out');
+    const settings = config({ baseline: { enabled: true }, gates: { minCoveragePercent: 90, maxDuplicationPercent: 1 } });
+
+    const unbaselined = await runAudit(root, settings, { outputDir });
+    assert.equal(unbaselined.report.duplication.baseline?.baselinedClusterCount, 0, 'no baseline.json yet');
+    assert.equal(unbaselined.report.duplication.baseline?.newClusterCount, 2);
+    assert.equal(unbaselined.passed, false, 'both clusters count as new without a baseline');
+
+    mkdirSync(outputDir, { recursive: true });
+    const baseline = buildBaseline(unbaselined.report.clusters, unbaselined.files);
+    writeFileSync(path.join(outputDir, 'baseline.json'), JSON.stringify(baseline));
+
+    const { report, passed } = await runAudit(root, settings, { outputDir });
+    assert.equal(report.duplication.clusterCount, 2, 'total count is unaffected by the baseline');
+    assert.equal(report.duplication.baseline?.baselinedClusterCount, 2);
+    assert.equal(report.duplication.baseline?.newClusterCount, 0);
+    assert.equal(report.duplication.baseline?.newPercent, 0);
+    assert.equal(passed, true, 'both clusters are already in the baseline, so the gate now passes');
   });
 
   it('builds detectors from the configured ids only', () => {
@@ -107,5 +131,27 @@ describe('cli', () => {
     const result = run(root);
     assert.equal(result.status, 2);
     assert.match(result.stderr, /Unknown config key "nope"/);
+  });
+
+  it('baseline command records current clusters, letting a later audit pass on pre-existing duplication', () => {
+    const root = makeRepo({
+      ...repoFiles,
+      [CONFIG_FILE]: JSON.stringify({
+        detectors: ['structure', 'css'],
+        baseline: { enabled: true },
+        gates: { maxDuplicationPercent: 1 },
+      }),
+    });
+    const outDir = path.join(root, 'out');
+
+    const baselined = spawnSync(process.execPath, [CLI, 'baseline', root, '--out', outDir], { encoding: 'utf8' });
+    assert.equal(baselined.status, 0, baselined.stderr);
+    assert.match(baselined.stdout, /recorded 2 cluster/);
+    const baseline = JSON.parse(readFileSync(path.join(outDir, 'baseline.json'), 'utf8'));
+    assert.equal(baseline.fingerprints.length, 2);
+
+    const audited = run(root, '--out', outDir);
+    assert.equal(audited.status, 0, audited.stderr);
+    assert.match(audited.stdout, /baseline {2}2 pre-existing cluster\(s\) excluded, 0 new/);
   });
 });

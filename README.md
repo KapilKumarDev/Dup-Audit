@@ -1,4 +1,4 @@
-# dup-audit
+# Dup-Audit
 
 A deterministic, non-AI duplicate-code auditor for TypeScript, JavaScript, CSS,
 and (via token matching) PL/pgSQL. Built to run unattended in CI: every run
@@ -59,6 +59,10 @@ node dist/src/cli.js /path/to/repo
 # One-time calibration: injects known mutated clones to measure recall,
 # and samples real clusters into a checklist for a human precision review
 node dist/src/cli.js calibrate /path/to/repo --samples 200
+
+# Record every cluster found right now, so later audits can gate on new
+# duplication only (see "Adopting the gate on an existing codebase" below)
+node dist/src/cli.js baseline /path/to/repo
 ```
 
 Both commands require the target to be a git repository (file listing and
@@ -103,6 +107,38 @@ below the similarity threshold rather than being missed. Your own numbers
 will differ; that's the point of running `calibrate` on your code rather
 than trusting a number from someone else's.
 
+## Adopting the gate on an existing codebase
+
+Turning `gates.maxDuplicationPercent` on for a codebase that already has years of
+accumulated duplication means either raising the limit until it's meaningless,
+or failing CI on day one for debt nobody added this week. `baseline` is the
+third option, the same one SonarQube's "new code" gates and ESLint's `--diff`
+mode use: freeze what's already there, and only fail on what gets added after.
+
+```bash
+node dist/src/cli.js baseline /path/to/repo   # writes <out>/baseline.json
+```
+
+Then set `"baseline": { "enabled": true }` in `dup-audit.config.json`. From
+then on, `report.duplication.percent` and `clusterCount` still describe the
+whole codebase — nothing is hidden from the report — but the
+`maxDuplicationPercent` gate is evaluated only against clusters not already in
+`baseline.json`, reported separately under `report.duplication.baseline`. The
+coverage gate is never affected: a baseline lowers the duplication bar, never
+the "did every file get examined" bar.
+
+A baseline entry is a hash of the duplicated text itself (per member, by
+path), not of line numbers, so an unrelated edit earlier in a file doesn't
+knock a cluster out of the baseline. Actually changing the duplicated code —
+fixing one copy, or editing both so they're no longer alike — does, which is
+what makes `newClusterCount` in the report a true count of duplication
+introduced since the baseline was taken, not an artifact of line drift. Two
+things follow from that: re-run `baseline` after intentionally accepting new
+duplication (so it doesn't count against you twice) or after fixing some of
+the baselined debt (so the file doesn't quietly protect code that no longer
+matches it); and a cluster whose file was renamed or moved falls out of the
+baseline and is reported as new, since it's now unmatchable by path.
+
 ## Coverage
 
 Coverage is lines actually examined by at least one detector, divided by
@@ -124,9 +160,15 @@ malformed CSS rule, for instance) counts as uncovered and is listed in
   near-miss detection — there was no dependency access in this environment
   to add a Postgres-aware AST pass. At ~2% of a typical mixed codebase this
   usually doesn't threaten the 90% coverage gate, but check your own numbers.
-- **Oversized functions** (over `structure.maxTedNodes`, default 500 AST
+- **Oversized functions** (over `structure.maxTedNodes`, default 5000 AST
   nodes) are matched exactly only; near-miss comparison is skipped for them
   and this is reported in `report.notes` rather than silently skipped.
+  5000 was chosen empirically (see `README` history / commit notes) to cover
+  large-but-real functions such as sizable React components without letting
+  tree edit distance run on pathologically huge, likely-generated units;
+  raise or lower `structure.maxTedNodes` per project via
+  `dup-audit.config.json` if your codebase's real functions run larger or
+  you need faster runs on very large repos.
 
 ## Development
 
@@ -134,7 +176,7 @@ malformed CSS rule, for instance) counts as uncovered and is listed in
 npm test           # type-checks and runs the full test suite (node --test)
 ```
 
-70 tests cover the tree edit distance algorithm (including a brute-force
+83 tests cover the tree edit distance algorithm (including a brute-force
 cross-check on random trees), clustering, every detector, coverage
-accounting, config validation, the merge/de-duplication logic, and the CLI's
-exit codes end-to-end.
+accounting, config validation, the merge/de-duplication logic, baseline
+fingerprinting, and the CLI's exit codes end-to-end.

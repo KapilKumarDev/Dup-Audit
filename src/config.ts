@@ -38,6 +38,15 @@ export interface Config {
     minDeclarations: number;
     similarity: number;
   };
+  baseline: {
+    /**
+     * When true, `<out>/baseline.json` (written by `dup-audit baseline`) is loaded and the
+     * duplication gate is evaluated against clusters not already in it, so existing debt on a
+     * large codebase doesn't block adopting the gate — only newly introduced duplication does.
+     * Coverage is still measured against everything; a baseline never hides missing coverage.
+     */
+    enabled: boolean;
+  };
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -72,11 +81,12 @@ export const DEFAULT_CONFIG: Config = {
     minNodes: 40,
     minLines: 5,
     similarity: 0.85,
-    maxTedNodes: 500,
+    maxTedNodes: 5000,
     candidateJaccard: 0.4,
     maxPosting: 64,
   },
   css: { minDeclarations: 3, similarity: 0.85 },
+  baseline: { enabled: false },
 };
 
 export class ConfigError extends Error {}

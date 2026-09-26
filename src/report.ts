@@ -16,6 +16,8 @@ export interface AuditReport {
     duplicatedLines: number;
     clusterCount: number;
     clustersByDetector: Partial<Record<DetectorId, number>>;
+    /** Present when config.baseline.enabled: the gate is evaluated against newPercent, not percent. */
+    baseline?: { baselinedClusterCount: number; newClusterCount: number; newPercent: number };
   };
   excluded: { files: number; lines: number };
   failures: Failure[];
@@ -40,6 +42,12 @@ export function formatSummary(report: AuditReport, outputDir: string): string {
 
   const detectors = Object.entries(duplication.clustersByDetector).map(([id, count]) => `${id}: ${count}`);
   if (detectors.length > 0) lines.push(`  by detector  ${detectors.join(', ')}`);
+  if (duplication.baseline !== undefined) {
+    const { baselinedClusterCount, newClusterCount, newPercent } = duplication.baseline;
+    lines.push(
+      `  baseline  ${baselinedClusterCount} pre-existing cluster(s) excluded, ${newClusterCount} new (${formatPercent(newPercent)} of code), gate applies to new only`,
+    );
+  }
 
   const uncovered = Object.entries(coverage.uncoveredLinesByExtension).map(([ext, count]) => `${ext}: ${count}`);
   if (uncovered.length > 0) lines.push(`  uncovered lines  ${uncovered.join(', ')}`);

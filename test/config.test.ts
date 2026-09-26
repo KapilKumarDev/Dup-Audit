@@ -49,4 +49,13 @@ describe('loadConfig', () => {
     writeFileSync(file, JSON.stringify({ css: { minDeclarations: 5 } }));
     assert.equal((await loadConfig(root, file)).css.minDeclarations, 5);
   });
+
+  it('defaults baseline.enabled to false and accepts an override', async () => {
+    assert.equal(DEFAULT_CONFIG.baseline.enabled, false);
+    assert.equal((await loadConfig(withConfig({ baseline: { enabled: true } }))).baseline.enabled, true);
+  });
+
+  it('rejects a non-boolean baseline.enabled', async () => {
+    await assert.rejects(loadConfig(withConfig({ baseline: { enabled: 'yes' } })), /must be a boolean/);
+  });
 });
