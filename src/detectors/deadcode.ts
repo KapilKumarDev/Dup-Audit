@@ -104,10 +104,6 @@ export async function resolveEntryPoints(
     }
   }
 
-  if (settings.treatTestsAsEntry) {
-    for (const file of files) if (TEST_PATH.test(file.path)) entries.add(file.path);
-  }
-
   return { entries: [...entries].sort(), basis };
 }
 
@@ -172,16 +168,21 @@ function usedExportsByFile(graph: ModuleGraph, reachable: ReadonlySet<string>): 
 export function createDeadCodeDetector(root: string, settings: Config['deadcode']): Detector {
   return {
     id: 'deadcode',
-    async run(files: readonly SourceFile[]): Promise<DetectorResult> {
+    async run(files: readonly SourceFile[], excludedFiles: readonly SourceFile[] = []): Promise<DetectorResult> {
+      const originalPaths = new Set(files.map((file) => file.path));
+      const testFiles = settings.treatTestsAsEntry
+        ? excludedFiles.filter((file) => TEST_PATH.test(file.path) && !originalPaths.has(file.path))
+        : [];
       const lines = new Map(files.map((file) => [file.path, file.lines]));
-      const graph = buildModuleGraph(files);
-      const { entries, basis } = await resolveEntryPoints(root, files, settings);
+      const graph = buildModuleGraph(testFiles.length > 0 ? [...files, ...testFiles] : files);
+      const { entries: resolvedEntries, basis } = await resolveEntryPoints(root, files, settings);
+      const entries = testFiles.length > 0 ? [...new Set([...resolvedEntries, ...testFiles.map((file) => file.path)])].sort() : resolvedEntries;
 
       if (entries.length === 0) {
         return {
           clusters: [],
           deadCode: [],
-          analyzed: [...graph.nodes.keys()],
+          analyzed: [...files.map((file) => file.path)],
           failures: [],
           notes: [
             'dead-code analysis skipped: no entry points could be resolved (checked package.json and conventional ' +
@@ -192,7 +193,9 @@ export function createDeadCodeDetector(root: string, settings: Config['deadcode'
 
       const reachable = reachableFiles(graph, entries);
       const used = usedExportsByFile(graph, reachable);
-      const analyzed = [...graph.nodes.keys()];
+      // Test files are only in the graph to serve as extra entry points/edges; they were never part of
+      // the audited set and are never themselves candidates for a dead-file or dead-export finding.
+      const analyzed = files.map((file) => file.path).filter((filePath) => graph.nodes.has(filePath));
       const findings: DeadCodeFinding[] = [];
 
       for (const filePath of analyzed) {
@@ -211,12 +214,17 @@ export function createDeadCodeDetector(root: string, settings: Config['deadcode'
       }
 
       for (const filePath of reachable) {
+        if (!originalPaths.has(filePath)) continue;
         if (matchesAny(filePath, settings.ignore)) continue;
         const node = graph.nodes.get(filePath);
         if (node === undefined) continue;
         const usedNames = used.get(filePath) ?? new Set<string>();
         for (const [name, line] of node.exports) {
           if (usedNames.has(name)) continue;
+          // 'default' isn't a real identifier text to search for; every other export is skipped here if
+          // it's referenced anywhere else in its own file (called by another function in the same module,
+          // for example) - its declaration contributes exactly one occurrence of its own name.
+          if (name !== 'default' && (node.identifierCounts.get(name) ?? 0) > 1) continue;
           const risk = mentionedElsewhereForName(name, graph, filePath);
           findings.push({
             kind: risk === undefined ? 'dead-export' : 'uncertain-export',
@@ -235,7 +243,9 @@ export function createDeadCodeDetector(root: string, settings: Config['deadcode'
         deadCode: findings,
         analyzed,
         failures: [],
-        notes: [`dead-code entry points (${basis}): ${entries.join(', ')}`],
+        notes: [
+          `dead-code entry points (${basis}${testFiles.length > 0 ? ' + test files' : ''}): ${entries.join(', ')}`,
+        ],
       };
     },
   };

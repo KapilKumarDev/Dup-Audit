@@ -52,11 +52,11 @@ export interface Config {
     /** Extra glob patterns for files this detector should never flag, e.g. framework files loaded by filename convention rather than by import. */
     ignore: string[];
     /**
-     * Also treat any file among the ones actually audited whose path looks like a test
-     * (`.test.`, `.spec.`, or under `__tests__/`) as an entry point in its own right, the way a test
-     * runner invokes it directly. Only takes effect for test files that are NOT already removed by the
-     * top-level `ignore` list before detectors run; the default `ignore` removes them, so this is only
-     * useful once you've deliberately kept test files in the audited set.
+     * Treat every test file (`.test.`, `.spec.`, or under `__tests__/`) as an entry point in its own
+     * right, the way a test runner invokes it directly - on by default, matching `knip`'s own default.
+     * This detector gathers test files itself, independently of the shared `ignore` list that (correctly)
+     * removes them for every other detector, specifically so a function exported only to be unit-tested
+     * directly isn't flagged as a dead export just because nothing in the shipped code calls it.
      */
     treatTestsAsEntry: boolean;
   };
@@ -108,7 +108,7 @@ export const DEFAULT_CONFIG: Config = {
     maxPosting: 64,
   },
   css: { minDeclarations: 3, similarity: 0.85 },
-  deadcode: { entry: [], ignore: [], treatTestsAsEntry: false },
+  deadcode: { entry: [], ignore: [], treatTestsAsEntry: true },
   baseline: { enabled: false },
 };
 

@@ -24,13 +24,20 @@ export interface FileGraphNode {
   dynamicSpecifiers: readonly string[];
   /** String literals in the file, capped in length, used only to flag "might be referenced dynamically". */
   stringLiterals: readonly string[];
+  /**
+   * How many times each identifier text appears anywhere in the file. A named export's own declaration
+   * contributes exactly one occurrence of its name, so a count greater than one means it's referenced
+   * again somewhere else in the same file - called internally, not merely declared and exported.
+   */
+  identifierCounts: ReadonlyMap<string, number>;
 }
 
 export interface ModuleGraph {
   nodes: ReadonlyMap<string, FileGraphNode>;
 }
 
-const RESOLVABLE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts'];
+export const SCRIPT_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts'];
+const RESOLVABLE_EXTENSIONS = SCRIPT_EXTENSIONS;
 /** NodeNext/ESM convention: source keeps `.ts` but imports spell the compiled `.js` extension. */
 const COMPILED_TO_SOURCE: Readonly<Record<string, string>> = { '.js': '.ts', '.mjs': '.mts', '.cjs': '.cts' };
 const MAX_LITERAL_LENGTH = 200;
@@ -72,6 +79,7 @@ interface FileExtraction {
   dynamicSpecifiers: string[];
   exports: Map<string, number>;
   stringLiterals: string[];
+  identifierCounts: Map<string, number>;
 }
 
 function declaredNames(name: ts.BindingName): string[] {
@@ -103,6 +111,7 @@ function extractFile(sourceFile: ts.SourceFile): FileExtraction {
   const dynamicSpecifiers: string[] = [];
   const exports = new Map<string, number>();
   const stringLiterals: string[] = [];
+  const identifierCounts = new Map<string, number>();
 
   const lineOf = (node: ts.Node): number => sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
   const addExport = (name: string, node: ts.Node): void => {
@@ -172,11 +181,12 @@ function extractFile(sourceFile: ts.SourceFile): FileExtraction {
     ) {
       stringLiterals.push(node.text);
     }
+    if (ts.isIdentifier(node)) identifierCounts.set(node.text, (identifierCounts.get(node.text) ?? 0) + 1);
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
 
-  return { rawEdges, dynamicSpecifiers, exports, stringLiterals };
+  return { rawEdges, dynamicSpecifiers, exports, stringLiterals, identifierCounts };
 }
 
 /** Builds the whole-program import graph for every TS/JS file among `files`; other extensions are ignored. */
@@ -200,6 +210,7 @@ export function buildModuleGraph(files: readonly SourceFile[]): ModuleGraph {
       exports: extraction.exports,
       dynamicSpecifiers: extraction.dynamicSpecifiers,
       stringLiterals: extraction.stringLiterals,
+      identifierCounts: extraction.identifierCounts,
     });
   }
   return { nodes };

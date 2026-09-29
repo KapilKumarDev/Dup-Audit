@@ -2,14 +2,15 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { DEFAULT_CONFIG } from '../src/config.js';
 import { createDeadCodeDetector } from '../src/detectors/deadcode.js';
-import { sourceFile } from './helpers.js';
+import { collectInventory } from '../src/inventory.js';
+import { makeRepo, sourceFile } from './helpers.js';
 
 // package.json lookups against this root fail (ENOENT) and are tolerated; every test sets `entry`
 // explicitly instead, so resolution never depends on auto-detection or a real filesystem.
 const ROOT = '/no-such-project';
 
 const run = (files: Record<string, string>, overrides: Partial<typeof DEFAULT_CONFIG.deadcode> = {}) =>
-  createDeadCodeDetector(ROOT, { ...DEFAULT_CONFIG.deadcode, entry: ['entry.ts'], ...overrides }).run(
+  createDeadCodeDetector(ROOT, { ...DEFAULT_CONFIG.deadcode, entry: ['entry.ts'], treatTestsAsEntry: false, ...overrides }).run(
     Object.entries(files).map(([name, text]) => sourceFile(name, text)),
   );
 
@@ -77,6 +78,32 @@ describe('deadcode detector', () => {
     const { deadCode, notes } = await run({ 'a.ts': 'export const x = 1;\n' }, { entry: [] });
     assert.equal(deadCode.length, 0);
     assert.match(notes[0], /no entry points could be resolved/);
+  });
+
+  it('does not flag a function exported only for direct unit testing, when treatTestsAsEntry is on', async () => {
+    // The dominant false-positive pattern in real use: `helper` is exported purely so a test file can
+    // import and exercise it directly, not because any shipped code calls it. Nothing in `files` other
+    // than the test itself ever references it, so this only passes once test files count as entries.
+    const root = makeRepo({
+      'src/entry.ts': `import './lib.js';\n`,
+      'src/lib.ts': `export function helper(): number { return 1; }\n`,
+      'src/lib.test.ts': `import { helper } from './lib.js';\nhelper();\n`,
+    });
+    const config = { ...structuredClone(DEFAULT_CONFIG), deadcode: { ...DEFAULT_CONFIG.deadcode, entry: ['src/entry.ts'] } };
+    const inventory = await collectInventory(root, config);
+    const { deadCode, notes } = await createDeadCodeDetector(root, config.deadcode).run(inventory.files, inventory.excludedFiles);
+    assert.equal(deadCode.some((f) => f.location.path === 'src/lib.ts'), false);
+    assert.match(notes[0], /\+ test files/);
+  });
+
+  it('does not flag an exported function that is also called elsewhere in its own file', async () => {
+    // `helper` is exported (so it COULD be imported elsewhere) but is really used internally by `entry`
+    // logic in the same module - never imported anywhere, but plainly not dead.
+    const { deadCode } = await run({
+      'entry.ts': `import './lib.js';\n`,
+      'lib.ts': `export function helper(): number { return 1; }\nexport function run(): number { return helper() + helper(); }\n`,
+    });
+    assert.equal(deadCode.some((f) => f.location.name === 'helper'), false);
   });
 
   it('reports the resolved entry points and basis on a normal run', async () => {

@@ -84,13 +84,17 @@ entry points instead. `deadcode` follows the same model:
    `uncertain-file`/`uncertain-export` — always reported, never gated.
 
 Known scope boundaries: only script files get reachability (CSS/SQL aren't
-attempted — a different, harder problem); test files don't count as entry
-points by default, since the shared `ignore` list removes them before any
-detector runs (`deadcode.treatTestsAsEntry` opts back in once you've
-deliberately kept them audited); and `import * as ns` conservatively marks
+attempted — a different, harder problem); and `import * as ns` conservatively marks
 every export of its target as used rather than tracking which property is
 actually read off `ns`, trading a few missed dead exports for zero false
 positives on that path.
+
+By default (`deadcode.treatTestsAsEntry: true`), test files count as entry
+points too, gathered independently of the shared `ignore` list that removes
+them for every other detector — this is what stops a function exported
+purely so a test can import and exercise it directly from being flagged as
+a dead export just because nothing shipped calls it. Set it to `false` for a
+stricter analysis that only trusts real, shipped entry points.
 
 Like `baseline`, the gate is opt-in (`gates.deadCode.enabled`, default
 `false`) and only counts high-confidence `dead-file` findings — a brand-new,
@@ -230,11 +234,10 @@ malformed CSS rule, for instance) counts as uncovered and is listed in
   any markup, or unused SQL objects, aren't attempted — that needs
   cross-referencing against markup/templates or a database's own dependency
   graph, a different problem from import-graph reachability.
-- **Test-only-used code is still flagged as dead** by default, since test
-  files are removed from the audited set by the shared `ignore` list before
-  any detector runs and so can't count as entry points. Set
-  `deadcode.treatTestsAsEntry: true` if you've deliberately kept test files
-  in the audited set and want them to count.
+- **Test files are entry points by default** (`deadcode.treatTestsAsEntry`),
+  so code exercised only by a test suite and never by shipped code is *not*
+  flagged. Set it to `false` for a stricter analysis; expect more findings
+  that need a human look before deleting anything.
 - **A wrong `deadcode.entry`** is the one way this detector can flag real,
   live code as dead — the resolved entry points are always in `report.notes`
   precisely so this is checkable, not something to find out from a bad gate

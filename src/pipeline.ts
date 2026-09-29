@@ -48,7 +48,7 @@ export async function runAudit(root: string, config: Config, options: RunAuditOp
   const inventory = await collectInventory(root, config);
 
   const results = [];
-  for (const detector of detectors) results.push(await detector.run(inventory.files));
+  for (const detector of detectors) results.push(await detector.run(inventory.files, inventory.excludedFiles));
 
   const analyzed = new Set(results.flatMap((result) => result.analyzed));
   const coverage = computeCoverage(inventory.files, analyzed);

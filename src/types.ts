@@ -68,5 +68,6 @@ export interface DetectorResult {
 
 export interface Detector {
   id: DetectorId;
-  run(files: readonly SourceFile[]): Promise<DetectorResult>;
+  /** excludedFiles: files the shared `ignore` list removed before `files` was built (e.g. test files) - already read once by collectInventory, so a detector that needs them (deadcode's entry points) doesn't have to re-scan. */
+  run(files: readonly SourceFile[], excludedFiles?: readonly SourceFile[]): Promise<DetectorResult>;
 }

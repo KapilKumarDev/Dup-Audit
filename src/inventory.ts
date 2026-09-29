@@ -15,6 +15,8 @@ export interface Inventory {
   files: SourceFile[];
   /** Code files removed by the `ignore` globs, reported so exclusions stay visible. */
   excluded: { files: number; lines: number };
+  /** The excluded files themselves (e.g. test files) - already read in full to produce the count above, so exposing them here is free. Detectors that need something the shared `ignore` list otherwise hides (deadcode's entry points) can use this instead of re-scanning. */
+  excludedFiles: SourceFile[];
 }
 
 export function countLines(text: string): number {
@@ -73,5 +75,6 @@ export async function collectInventory(root: string, config: Config): Promise<In
   return {
     files,
     excluded: { files: excludedFiles.length, lines: excludedFiles.reduce((sum, file) => sum + file.lines, 0) },
+    excludedFiles,
   };
 }
