@@ -3,8 +3,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after } from 'node:test';
-import { countLines } from '../src/inventory.js';
-import type { SourceFile } from '../src/types.js';
+import { DEFAULT_CONFIG, type Config } from '../src/config.js';
+import { createDeadCodeDetector } from '../src/detectors/deadcode.js';
+import { collectInventory, countLines } from '../src/inventory.js';
+import type { DetectorResult, SourceFile } from '../src/types.js';
 
 export function sourceFile(filePath: string, text: string): SourceFile {
   return { path: filePath, ext: path.extname(filePath).toLowerCase(), text, lines: countLines(text) };
@@ -21,6 +23,20 @@ export function makeRepo(files: Record<string, string>): string {
     writeFileSync(target, text);
   }
   return root;
+}
+
+/**
+ * Writes `files` into a temp git repository and runs the dead-code detector over it the way the CLI
+ * does: package.json and tsconfig.json are read from disk, and test files reach the detector as excluded.
+ */
+export async function detectDeadCode(
+  files: Record<string, string>,
+  overrides: Partial<Config['deadcode']> = {},
+): Promise<DetectorResult> {
+  const root = makeRepo(files);
+  const config: Config = { ...structuredClone(DEFAULT_CONFIG), deadcode: { ...DEFAULT_CONFIG.deadcode, ...overrides } };
+  const inventory = await collectInventory(root, config);
+  return createDeadCodeDetector(root, config.deadcode).run(inventory.files, inventory.excludedFiles);
 }
 
 export const ORDER_TOTAL = `export function computeTotal(items: Item[], taxRate: number): number {

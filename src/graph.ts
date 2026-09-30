@@ -1,6 +1,7 @@
 import path from 'node:path';
 import ts from 'typescript';
 import { parse } from './detectors/structure.js';
+import { toPosix } from './tsconfig.js';
 import type { SourceFile } from './types.js';
 
 /** How one file causes another to load. `re-export` covers both `export * from` and `export { x } from`. */
@@ -36,36 +37,37 @@ export interface ModuleGraph {
   nodes: ReadonlyMap<string, FileGraphNode>;
 }
 
-export const SCRIPT_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts'];
-const RESOLVABLE_EXTENSIONS = SCRIPT_EXTENSIONS;
-/** NodeNext/ESM convention: source keeps `.ts` but imports spell the compiled `.js` extension. */
-const COMPILED_TO_SOURCE: Readonly<Record<string, string>> = { '.js': '.ts', '.mjs': '.mts', '.cjs': '.cts' };
 const MAX_LITERAL_LENGTH = 200;
 
-function normalizeRelative(from: string, specifier: string): string {
-  return path.posix.normalize(path.posix.join(path.posix.dirname(from), specifier));
+/** Where the audited tree lives and how the project resolves imports; see `loadCompilerOptions`. */
+export interface ResolutionContext {
+  root: string;
+  options: ts.CompilerOptions;
 }
 
 /**
- * Resolves a relative module specifier to one of the known inventory paths, using the same suffix
- * rules Node's ESM loader and the TypeScript compiler apply: as written, with a resolvable extension
- * appended, with a compiled `.js`-style extension swapped for its `.ts`-style source, or as a directory
- * `index` file. Returns undefined for a bare/package specifier (out of scope: external, not audited) or
- * for anything that doesn't match a known file - most commonly a non-code asset (`.json`, `.svg`, css
- * treated as an asset), which is not an error and is not treated as ambiguous.
+ * Resolves a module specifier written in `from` to one of the known inventory paths using TypeScript's
+ * own resolver, so `paths` aliases, `baseUrl`, extensionless and `.js`-for-`.ts` specifiers, directory
+ * `index` files, and package self-references behave as they do for the compiler. The file system is the
+ * inventory itself, so nothing outside the audited set can resolve: a bare package specifier, a
+ * non-code asset (`.json`, `.svg`), or a file the `ignore` list removed all come back `undefined`, which
+ * is expected and not an error.
  */
-export function resolveSpecifier(from: string, specifier: string, known: ReadonlySet<string>): string | undefined {
-  if (!specifier.startsWith('.')) return undefined;
-  const base = normalizeRelative(from, specifier);
-  const ext = path.posix.extname(base);
-  const swapped = ext in COMPILED_TO_SOURCE ? `${base.slice(0, -ext.length)}${COMPILED_TO_SOURCE[ext]}` : undefined;
-  const candidates = [
-    base,
-    ...RESOLVABLE_EXTENSIONS.map((extension) => `${base}${extension}`),
-    ...(swapped !== undefined ? [swapped] : []),
-    ...RESOLVABLE_EXTENSIONS.map((extension) => `${base}/index${extension}`),
-  ];
-  return candidates.find((candidate) => known.has(candidate));
+function createResolver(known: ReadonlySet<string>, { root, options }: ResolutionContext): (from: string, specifier: string) => string | undefined {
+  const rootDir = toPosix(root);
+  const toRelative = (absolute: string): string => path.posix.relative(rootDir, absolute);
+  const host: ts.ModuleResolutionHost = {
+    fileExists: (absolute) => known.has(toRelative(absolute)),
+    readFile: () => undefined,
+    getCurrentDirectory: () => rootDir,
+  };
+  const cache = ts.createModuleResolutionCache(rootDir, (fileName) => fileName, options);
+  return (from, specifier) => {
+    const { resolvedModule } = ts.resolveModuleName(specifier, path.posix.join(rootDir, from), options, host, cache);
+    if (resolvedModule === undefined || resolvedModule.isExternalLibraryImport === true) return undefined;
+    const resolved = toRelative(resolvedModule.resolvedFileName);
+    return known.has(resolved) ? resolved : undefined;
+  };
 }
 
 interface RawEdge {
@@ -143,6 +145,10 @@ function extractFile(sourceFile: ts.SourceFile): FileExtraction {
         // `export * from './x'`: forwards every export of './x'; only meaningful if this file is itself reachable.
         // Not a named export of this file, so it isn't added to `exports` - only the forwarding edge matters.
         if (fromModule !== undefined) rawEdges.push({ specifier: fromModule, kind: 're-export', names: ['*'] });
+      } else if (ts.isNamespaceExport(node.exportClause)) {
+        // `export * as ns from './x'`: exposes all of './x' under one name of this file.
+        if (fromModule !== undefined) rawEdges.push({ specifier: fromModule, kind: 're-export', names: ['*'] });
+        addExport(node.exportClause.name.text, node);
       } else if (ts.isNamedExports(node.exportClause)) {
         const publicNames = node.exportClause.elements.map((element) => element.name.text);
         if (fromModule !== undefined) {
@@ -161,6 +167,20 @@ function extractFile(sourceFile: ts.SourceFile): FileExtraction {
       edgeLiterals.add(node.moduleSpecifier);
     } else if (ts.isExportDeclaration(node) && node.moduleSpecifier !== undefined && ts.isStringLiteral(node.moduleSpecifier)) {
       edgeLiterals.add(node.moduleSpecifier); // the edge itself is recorded by visitDeclaration's export handling
+    } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      // `import x = require('./x')`
+      const { expression } = node.moduleReference;
+      if (ts.isStringLiteral(expression)) {
+        rawEdges.push({ specifier: expression.text, kind: 'require', names: ['*'] });
+        edgeLiterals.add(expression);
+      }
+    } else if (ts.isImportTypeNode(node)) {
+      // `import('./x').Thing` used as a type: no runtime edge, but the file is plainly referenced.
+      const { argument } = node;
+      if (ts.isLiteralTypeNode(argument) && ts.isStringLiteral(argument.literal)) {
+        rawEdges.push({ specifier: argument.literal.text, kind: 'import', names: ['*'] });
+        edgeLiterals.add(argument.literal);
+      }
     } else if (ts.isCallExpression(node)) {
       const isRequire = ts.isIdentifier(node.expression) && node.expression.text === 'require';
       const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
@@ -190,8 +210,9 @@ function extractFile(sourceFile: ts.SourceFile): FileExtraction {
 }
 
 /** Builds the whole-program import graph for every TS/JS file among `files`; other extensions are ignored. */
-export function buildModuleGraph(files: readonly SourceFile[]): ModuleGraph {
+export function buildModuleGraph(files: readonly SourceFile[], resolution: ResolutionContext): ModuleGraph {
   const known = new Set(files.map((file) => file.path));
+  const resolve = createResolver(known, resolution);
   const extractions = new Map<string, FileExtraction>();
   for (const file of files) {
     const sourceFile = parse(file);
@@ -202,7 +223,7 @@ export function buildModuleGraph(files: readonly SourceFile[]): ModuleGraph {
   for (const [filePath, extraction] of extractions) {
     const edges: ImportEdge[] = [];
     for (const raw of extraction.rawEdges) {
-      const to = resolveSpecifier(filePath, raw.specifier, known);
+      const to = resolve(filePath, raw.specifier);
       if (to !== undefined && to !== filePath) edges.push({ to, kind: raw.kind, names: raw.names });
     }
     nodes.set(filePath, {

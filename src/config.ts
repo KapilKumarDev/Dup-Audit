@@ -43,10 +43,11 @@ export interface Config {
   deadcode: {
     /**
      * Glob patterns (relative to root, POSIX-style) for the program's real entry points - the files that
-     * are run directly rather than only imported. Empty means "auto-detect": package.json `main`/`bin`/
-     * `exports`, then a conventional root-level index/main/cli file if none of those resolve. The
-     * resolved list is always reported, since a wrong entry point is the one way this detector can flag
-     * live code as dead.
+     * are run directly rather than only imported. Empty means "auto-detect": package.json entry fields and
+     * scripts, a conventional index/main/cli file in the root or src, and the conventions of frameworks
+     * listed in package.json, all combined. Setting it replaces that auto-detection; files a tool loads by
+     * name (`*.config.*`, `.*rc.*`, dot-directories) stay live either way. The resolved list is always
+     * reported, since a missing entry point is how this detector flags live code as dead.
      */
     entry: string[];
     /** Extra glob patterns for files this detector should never flag, e.g. framework files loaded by filename convention rather than by import. */

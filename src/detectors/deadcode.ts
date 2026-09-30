@@ -1,135 +1,72 @@
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
 import type { Config } from '../config.js';
+import { resolveEntryPoints } from '../entrypoints.js';
+import { createMatcher } from '../glob.js';
+import path from 'node:path';
 import { buildModuleGraph, type ModuleGraph } from '../graph.js';
+import { loadCompilerOptions } from '../tsconfig.js';
 import type { DeadCodeFinding, Detector, DetectorResult, SourceFile } from '../types.js';
 
-const PACKAGE_FILE = 'package.json';
-const CONVENTIONAL_ENTRY_NAMES = new Set(['index', 'main', 'cli']);
 /** Basenames too generic to trust as an "is this referenced elsewhere" hit on their own. */
 const GENERIC_BASENAMES = new Set(['index', 'main', 'config', 'types', 'utils', 'helpers', 'constants']);
 const MIN_HEURISTIC_MATCH_LENGTH = 4;
 const TEST_PATH = /(^|\/)(__tests__\/.*|.*\.(test|spec)\.[^/]+)$/;
+/** Files that import scripts but that the graph cannot read into; their raw text is searched for mentions instead. */
+const TEMPLATE_EXTENSIONS = new Set(['.vue', '.svelte', '.html', '.htm']);
 
-const isMissingFile = (error: unknown): boolean =>
-  error instanceof Error && 'code' in error && error.code === 'ENOENT';
-
-function globToRegExp(glob: string): RegExp {
-  const placeholder = '\u0000';
-  const body = glob
-    .split('**')
-    .join(placeholder)
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .split('*')
-    .join('[^/]*')
-    .split(placeholder)
-    .join('.*');
-  return new RegExp(`^${body}$`);
+/** Everything one file says that might name another file or export without importing it. */
+interface MentionSource {
+  path: string;
+  texts: readonly string[];
 }
 
-function matchesAny(filePath: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(filePath));
+function mentionSources(graph: ModuleGraph, templates: readonly SourceFile[]): MentionSource[] {
+  return [
+    ...[...graph.nodes].map(([path, node]) => ({ path, texts: [...node.dynamicSpecifiers, ...node.stringLiterals] })),
+    ...templates.map((file) => ({ path: file.path, texts: [file.text] })),
+  ];
 }
 
-/** Strings found anywhere in package.json's `main`/`bin`/`exports` fields, whatever shape they take. */
-function collectPathStrings(value: unknown, out: string[]): void {
-  if (typeof value === 'string') out.push(value);
-  else if (Array.isArray(value)) for (const item of value) collectPathStrings(item, out);
-  else if (value !== null && typeof value === 'object') for (const item of Object.values(value)) collectPathStrings(item, out);
-}
-
-/** Maps a compiled/declared path (e.g. `dist/src/cli.js`) back to the source file it most likely came from. */
-function toSourceCandidates(declared: string): string[] {
-  const normalized = declared.replace(/^\.\//, '');
-  const withoutDist = normalized.replace(/^dist\//, '');
-  const ext = path.posix.extname(withoutDist);
-  const swapped: Record<string, string> = { '.js': '.ts', '.mjs': '.mts', '.cjs': '.cts' };
-  const sourceExt = swapped[ext];
-  return [normalized, withoutDist, ...(sourceExt !== undefined ? [`${withoutDist.slice(0, -ext.length)}${sourceExt}`] : [])];
-}
-
-async function packageJsonEntries(root: string): Promise<string[]> {
-  let raw: string;
-  try {
-    raw = await readFile(path.join(root, PACKAGE_FILE), 'utf8');
-  } catch (error) {
-    if (isMissingFile(error)) return [];
-    throw error;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return [];
-  }
-  const declared: string[] = [];
-  if (parsed !== null && typeof parsed === 'object') {
-    const record = parsed as Record<string, unknown>;
-    collectPathStrings(record.main, declared);
-    collectPathStrings(record.bin, declared);
-    collectPathStrings(record.exports, declared);
-  }
-  return declared.flatMap(toSourceCandidates);
-}
-
-/**
- * Resolves the real entry points of the program: files that run directly, not only ones that get
- * imported. Getting this wrong is the one way this detector can flag live code as dead, so every
- * source it tried is folded into the result for transparency, and it is reported every run.
- */
-export async function resolveEntryPoints(
-  root: string,
-  files: readonly SourceFile[],
-  settings: Config['deadcode'],
-): Promise<{ entries: string[]; basis: string }> {
-  const known = new Set(files.map((file) => file.path));
-  const entries = new Set<string>();
-  let basis: string;
-
-  if (settings.entry.length > 0) {
-    for (const file of files) if (matchesAny(file.path, settings.entry)) entries.add(file.path);
-    basis = `deadcode.entry (${settings.entry.join(', ')})`;
-  } else {
-    const declared = await packageJsonEntries(root);
-    for (const candidate of declared) if (known.has(candidate)) entries.add(candidate);
-    if (entries.size > 0) {
-      basis = 'package.json main/bin/exports';
-    } else {
-      for (const file of files) {
-        const parts = file.path.split('/');
-        const base = path.posix.basename(file.path, path.posix.extname(file.path));
-        if (parts.length <= 2 && CONVENTIONAL_ENTRY_NAMES.has(base)) entries.add(file.path);
-      }
-      basis = 'conventional index/main/cli file at the project root';
-    }
-  }
-
-  return { entries: [...entries].sort(), basis };
-}
-
-/** Files, other than the candidate itself, that mention `needle` in a dynamic specifier or string literal. */
-function mentionedElsewhere(needle: string, graph: ModuleGraph, exclude: string): string | undefined {
+/** Files, other than the candidate itself, that mention `needle` in a dynamic specifier, string literal, or template. */
+function mentionedElsewhere(needle: string, sources: readonly MentionSource[], exclude: string): string | undefined {
   if (needle.length < MIN_HEURISTIC_MATCH_LENGTH) return undefined;
-  for (const [filePath, node] of graph.nodes) {
-    if (filePath === exclude) continue;
-    const hit = [...node.dynamicSpecifiers, ...node.stringLiterals].find((text) => text.includes(needle));
-    if (hit !== undefined) return filePath;
-  }
-  return undefined;
+  return sources.find((source) => source.path !== exclude && source.texts.some((text) => text.includes(needle)))?.path;
 }
 
-function dynamicRiskReason(candidatePath: string, graph: ModuleGraph): string | undefined {
+function dynamicRiskReason(candidatePath: string, sources: readonly MentionSource[]): string | undefined {
   const withoutExt = candidatePath.replace(/\.[^./]+$/, '');
   const basename = withoutExt.split('/').pop() ?? withoutExt;
   const needles = GENERIC_BASENAMES.has(basename) ? [withoutExt] : [withoutExt, basename];
   for (const needle of needles) {
-    const hitPath = mentionedElsewhere(needle, graph, candidatePath);
+    const hitPath = mentionedElsewhere(needle, sources, candidatePath);
     if (hitPath !== undefined) return `${hitPath} contains a string that may reference this file dynamically ("${needle}")`;
   }
   return undefined;
 }
 
-/** Breadth-first reachability over the whole-file import/require/dynamic-import/re-export graph. */
+function mentionedElsewhereForName(name: string, sources: readonly MentionSource[], exclude: string): string | undefined {
+  if (GENERIC_BASENAMES.has(name)) return undefined;
+  const hitPath = mentionedElsewhere(name, sources, exclude);
+  return hitPath === undefined ? undefined : `${hitPath} contains the string "${name}" (possible reflection-style access)`;
+}
+
+/**
+ * Files a tool config names outright, e.g. vitest's `setupFiles: ['./src/test-setup.ts']`. The tool
+ * loads them, so no import ever points at them. Only exact paths count (relative to the project root
+ * or to the config itself); globs like tailwind's `content` would otherwise mark whole trees live.
+ */
+function filesNamedBy(graph: ModuleGraph, toolOwned: readonly string[]): string[] {
+  const named = new Set<string>();
+  for (const configPath of toolOwned) {
+    for (const literal of graph.nodes.get(configPath)?.stringLiterals ?? []) {
+      for (const candidate of [path.posix.normalize(literal).replace(/^\//, ''), path.posix.join(path.posix.dirname(configPath), literal)]) {
+        if (candidate !== configPath && graph.nodes.has(candidate)) named.add(candidate);
+      }
+    }
+  }
+  return [...named].sort();
+}
+
+/** Reachability over the whole-file import/require/dynamic-import/re-export graph; visit order doesn't matter. */
 function reachableFiles(graph: ModuleGraph, entries: readonly string[]): Set<string> {
   const visited = new Set<string>(entries.filter((entry) => graph.nodes.has(entry)));
   const queue = [...visited];
@@ -166,6 +103,7 @@ function usedExportsByFile(graph: ModuleGraph, reachable: ReadonlySet<string>): 
 }
 
 export function createDeadCodeDetector(root: string, settings: Config['deadcode']): Detector {
+  const isIgnored = createMatcher(settings.ignore);
   return {
     id: 'deadcode',
     async run(files: readonly SourceFile[], excludedFiles: readonly SourceFile[] = []): Promise<DetectorResult> {
@@ -174,40 +112,44 @@ export function createDeadCodeDetector(root: string, settings: Config['deadcode'
         ? excludedFiles.filter((file) => TEST_PATH.test(file.path) && !originalPaths.has(file.path))
         : [];
       const lines = new Map(files.map((file) => [file.path, file.lines]));
-      const graph = buildModuleGraph(testFiles.length > 0 ? [...files, ...testFiles] : files);
-      const { entries: resolvedEntries, basis } = await resolveEntryPoints(root, files, settings);
-      const entries = testFiles.length > 0 ? [...new Set([...resolvedEntries, ...testFiles.map((file) => file.path)])].sort() : resolvedEntries;
+      const options = loadCompilerOptions(root);
+      const graph = buildModuleGraph(testFiles.length > 0 ? [...files, ...testFiles] : files, { root, options });
+      const { program, toolOwned, basis } = await resolveEntryPoints(root, files, settings, options);
 
-      if (entries.length === 0) {
+      if (program.length === 0) {
         return {
           clusters: [],
           deadCode: [],
           analyzed: [...files.map((file) => file.path)],
           failures: [],
           notes: [
-            'dead-code analysis skipped: no entry points could be resolved (checked package.json and conventional ' +
-              'index/main/cli files). Set "deadcode.entry" in dup-audit.config.json to enable it.',
+            'dead-code analysis skipped: no entry points could be resolved (checked package.json fields and scripts, ' +
+              'conventional index/main/cli files, and framework conventions). Set "deadcode.entry" in ' +
+              'dup-audit.config.json to enable it.',
           ],
         };
       }
 
-      const reachable = reachableFiles(graph, entries);
+      const toolNamed = filesNamedBy(graph, toolOwned);
+      const entries = new Set([...program, ...toolOwned, ...toolNamed, ...testFiles.map((file) => file.path)]);
+      const reachable = reachableFiles(graph, [...entries]);
       const used = usedExportsByFile(graph, reachable);
+      const sources = mentionSources(graph, files.filter((file) => TEMPLATE_EXTENSIONS.has(file.ext)));
       // Test files are only in the graph to serve as extra entry points/edges; they were never part of
       // the audited set and are never themselves candidates for a dead-file or dead-export finding.
       const analyzed = files.map((file) => file.path).filter((filePath) => graph.nodes.has(filePath));
       const findings: DeadCodeFinding[] = [];
 
       for (const filePath of analyzed) {
-        if (matchesAny(filePath, settings.ignore)) continue;
+        if (isIgnored(filePath)) continue;
         if (reachable.has(filePath)) continue;
-        const risk = dynamicRiskReason(filePath, graph);
+        const risk = dynamicRiskReason(filePath, sources);
         findings.push({
           kind: risk === undefined ? 'dead-file' : 'uncertain-file',
           location: { path: filePath, startLine: 1, endLine: lines.get(filePath) ?? 1 },
           reason:
             risk === undefined
-              ? `Not reachable from any configured entry point (${entries.join(', ')}, via ${basis}); no ` +
+              ? `Not reachable from any of the ${entries.size} entry points (${basis}; listed in the run's notes); no ` +
                 'resolved import, require, dynamic import, or re-export leads to it, directly or through any other file.'
               : `Not reachable from any configured entry point, but ${risk} - reported as uncertain rather than dead.`,
         });
@@ -215,7 +157,10 @@ export function createDeadCodeDetector(root: string, settings: Config['deadcode'
 
       for (const filePath of reachable) {
         if (!originalPaths.has(filePath)) continue;
-        if (matchesAny(filePath, settings.ignore)) continue;
+        if (isIgnored(filePath)) continue;
+        // An entry file's exports are consumed by whatever runs it (a framework, a package consumer, a
+        // tool), not by another file, so the graph can never show them as used.
+        if (entries.has(filePath)) continue;
         const node = graph.nodes.get(filePath);
         if (node === undefined) continue;
         const usedNames = used.get(filePath) ?? new Set<string>();
@@ -225,7 +170,7 @@ export function createDeadCodeDetector(root: string, settings: Config['deadcode'
           // it's referenced anywhere else in its own file (called by another function in the same module,
           // for example) - its declaration contributes exactly one occurrence of its own name.
           if (name !== 'default' && (node.identifierCounts.get(name) ?? 0) > 1) continue;
-          const risk = mentionedElsewhereForName(name, graph, filePath);
+          const risk = mentionedElsewhereForName(name, sources, filePath);
           findings.push({
             kind: risk === undefined ? 'dead-export' : 'uncertain-export',
             location: { path: filePath, startLine: line, endLine: line, name },
@@ -244,15 +189,15 @@ export function createDeadCodeDetector(root: string, settings: Config['deadcode'
         analyzed,
         failures: [],
         notes: [
-          `dead-code entry points (${basis}${testFiles.length > 0 ? ' + test files' : ''}): ${entries.join(', ')}`,
+          `dead-code entry points (${basis}${testFiles.length > 0 ? ' + test files' : ''}): ${program.join(', ')}`,
+          ...(toolNamed.length > 0
+            ? [`dead-code treats ${toolNamed.length} file(s) named by a tool config as live: ${toolNamed.join(', ')}`]
+            : []),
+          ...(toolOwned.length > 0
+            ? [`dead-code treats ${toolOwned.length} tool-owned file(s) as live by naming convention (*.config.*, .*rc.*, dot-directories): ${toolOwned.join(', ')}`]
+            : []),
         ],
       };
     },
   };
-}
-
-function mentionedElsewhereForName(name: string, graph: ModuleGraph, exclude: string): string | undefined {
-  if (GENERIC_BASENAMES.has(name)) return undefined;
-  const hitPath = mentionedElsewhere(name, graph, exclude);
-  return hitPath === undefined ? undefined : `${hitPath} contains the string "${name}" (possible reflection-style access)`;
 }

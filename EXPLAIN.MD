@@ -160,20 +160,35 @@ checks. `dup-audit`'s `deadcode` detector follows that same model.
    (and their `m`/`c` variants) file is parsed, and every way one file can
    cause another to load is recorded as a directed edge: static
    `import`/`export … from`, CommonJS `require(...)`, dynamic `import(...)`,
-   and re-exports (`export * from`, `export { x } from`). Specifiers are
-   resolved the way Node's ESM loader and the TypeScript compiler actually
-   resolve them — extensionless imports, the NodeNext convention of writing
-   `./foo.js` to mean `./foo.ts`, and directory `index` files.
+   `export * as ns from`, `import x = require(...)`, `import('./x').T` type
+   references, and re-exports (`export * from`, `export { x } from`).
+   Specifiers are resolved by TypeScript's own module resolver over the
+   project's `tsconfig.json` (`paths` aliases such as `@/lib/x`, `baseUrl`,
+   `extends`), in its most permissive `Bundler` mode: extensionless imports,
+   the NodeNext convention of writing `./foo.js` to mean `./foo.ts`, and
+   directory `index` files.
 2. **Resolve real entry points** — the files that are *run*, not just
-   imported: `package.json`'s `main`/`bin`/`exports` fields (mapped back from
-   a compiled `dist/` path to its source file), an explicit
-   `deadcode.entry` glob list, or, failing both, a conventional root-level
-   `index`/`main`/`cli` file. **This list is always reported in the run's
-   notes, never silently assumed** — a wrong entry point is the one way this
-   detector could flag genuinely live code as dead, so it's never hidden.
-   If nothing resolves, the detector reports nothing and says so explicitly,
-   rather than guessing and risking a codebase-wide false positive.
-3. **Mark-and-sweep reachability**: a breadth-first search over the graph,
+   imported. An explicit `deadcode.entry` glob list replaces the automatic
+   sources below, since it says exactly what runs. Otherwise every source is
+   added together, because a missing entry point is what produces false
+   positives while an extra one only hides a finding:
+   `package.json`'s `main`/`module`/`browser`/`bin`/`exports` (mapped back
+   from compiled output to source using the tsconfig `outDir`/`rootDir`, or
+   `dist`/`build`/`lib`/`out` and `src/` by convention), any file named in a
+   `package.json` script (`node scripts/seed.js`, `--config=tools/x.ts`), a
+   conventional `index`/`main`/`cli` file in the root or `src/`, and the
+   directory conventions of a framework listed in `package.json`
+   (Next.js, Astro, SvelteKit, Remix/React Router, Gatsby, Storybook,
+   Cypress, Knex). Independently of all that, files a tool loads by name are
+   always live: `*.config.*`, `.*rc.*`, and anything under a dot-directory
+   such as `.storybook/`, and so is any file such a config names outright
+   (vitest's `setupFiles`; exact paths only, never globs). **All of this is reported in the run's notes,
+   never silently assumed.** The exports of an entry file are never reported
+   as unused, since whatever runs it (a framework, a package consumer)
+   reads them, not another file. If no program entry resolves, the detector
+   reports nothing and says so explicitly, rather than guessing and risking a
+   codebase-wide false positive; tool config files alone don't count.
+3. **Mark-and-sweep reachability**: a search over the graph,
    starting *only* from the resolved entry points. Every file the search
    reaches is live. This is the step that solves the "wired to a dead file"
    problem directly: `helper.ts` above is only reachable *through* `dead.ts`,
@@ -203,7 +218,9 @@ checks. `dup-audit`'s `deadcode` detector follows that same model.
    `dead-file`/`dead-export` to **`uncertain-file`/`uncertain-export`**.
    Uncertain findings are always reported, but **never count toward the
    gate** — the tool would rather ask a human to look than delete something
-   it can't actually prove is unreachable.
+   it can't actually prove is unreachable. The same downgrade applies when
+   a `.vue`/`.svelte`/`.html` file mentions the name: the graph can't read
+   into those files, so their raw text is searched instead.
 
 **What it deliberately does not promise:**
 
@@ -218,6 +235,13 @@ checks. `dup-audit`'s `deadcode` detector follows that same model.
   and want them to count as entry points, matching `knip`'s default
   behavior (a fix `knip` made over `ts-prune`, which "made no attempt to
   understand whether your test code was alive or dead").
+- **Monorepos and auto-imports.** Only the root `package.json` and
+  `tsconfig.json` are read, so a workspace package's own entry fields aren't
+  seen and imports between workspace packages (`@org/pkg`) don't resolve;
+  list those entries in `deadcode.entry`. Frameworks that auto-import
+  (Nuxt composables, for instance) leave no import to follow. Framework
+  conventions outside the built-in list need `deadcode.entry` or
+  `deadcode.ignore`.
 - **CSS/SQL reachability.** Only script files get graph-based reachability.
   A CSS rule that's never referenced by any class name in markup, or a SQL
   object nothing calls, is a *different*, much harder problem (it needs
@@ -364,8 +388,8 @@ Use this as a quick "will this get flagged, and why" reference.
 
 **For a file or export to be eligible for `deadcode`:**
 - [ ] It's a script file (`.ts`/`.tsx`/`.js`/`.jsx` and `m`/`c` variants) — CSS/SQL are out of scope for this detector
-- [ ] It is not itself a resolved entry point (`package.json` main/bin/exports, `deadcode.entry`, or a conventional root `index`/`main`/`cli` file — always listed in the run's notes)
-- [ ] No breadth-first search from any entry point, over the whole import/require/dynamic-import/re-export graph, ever reaches it — reachability *through* another file only counts if that other file is itself reachable
+- [ ] It is not itself a resolved entry point (`package.json` fields or scripts, `deadcode.entry`, a conventional root/`src` `index`/`main`/`cli` file, or a framework convention — always listed in the run's notes) and not a tool-owned file (`*.config.*`, `.*rc.*`, dot-directories)
+- [ ] No search from any entry point, over the whole import/require/dynamic-import/re-export graph, ever reaches it — reachability *through* another file only counts if that other file is itself reachable
 - [ ] For an export specifically: no file that *is* reachable imports that name (by name, by namespace, or via a re-export)
 - [ ] It is downgraded to `uncertain` rather than `dead` if a computed (`require(x)`, `import(`${x}`)`) reference exists anywhere and a literal string elsewhere plausibly names it — `uncertain` findings are reported but never gate the build
 

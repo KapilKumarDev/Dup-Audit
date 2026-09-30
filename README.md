@@ -62,16 +62,25 @@ detect mutually recursive dead code"), and the reason its successor `knip`
 entry points instead. `deadcode` follows the same model:
 
 1. Build the whole-program import graph: every `import`, `export … from`,
-   `require(...)`, and dynamic `import(...)` becomes an edge, resolved the
-   way Node/TypeScript actually resolve specifiers (extensionless imports,
+   `require(...)`, and dynamic `import(...)` becomes an edge, resolved by
+   TypeScript's own module resolver over your `tsconfig.json` (`paths`
+   aliases like `@/lib/x`, `baseUrl`, `extends`, extensionless imports,
    `.js`-written/`.ts`-compiled NodeNext style, directory `index` files).
-2. Resolve real entry points — files that *run*, not just get imported:
-   `package.json`'s `main`/`bin`/`exports`, an explicit `deadcode.entry` glob
-   list, or a conventional root `index`/`main`/`cli` file as a last resort.
-   **This list is always in the run's notes.** A wrong entry point is the one
-   way this detector can flag live code as dead, so it's never assumed
-   silently — if it can't resolve any, it reports nothing and says so.
-3. Breadth-first search from those entry points only, over the whole graph.
+2. Resolve real entry points — files that *run*, not just get imported. An
+   explicit `deadcode.entry` glob list replaces the automatic sources;
+   otherwise all of these are added together: `package.json`'s
+   `main`/`module`/`browser`/`bin`/`exports` (mapped back from compiled
+   output to source via the tsconfig `outDir`/`rootDir`), files named in
+   `package.json` scripts, a conventional `index`/`main`/`cli` file in the
+   root or `src/`, and the conventions of a framework listed in
+   `package.json` (Next.js, Astro, SvelteKit, Remix/React Router, Gatsby,
+   Storybook, Cypress, Knex). Files a tool loads by name (`*.config.*`,
+   `.*rc.*`, anything under a dot-directory such as `.storybook/`) are always
+   live, as is any file such a config names outright (`setupFiles`), and the exports of an entry file are never reported as unused.
+   **The entry points are always in the run's notes.** A missing entry point
+   is how live code gets flagged as dead, so nothing is assumed silently — if
+   no program entry resolves, it reports nothing and says so.
+3. Search from those entry points only, over the whole graph.
    A file only reachable *through* another unreachable file is still
    unreachable — this is what fixes the `dead.ts`/`helper.ts` case above.
 4. Anything the search never reaches is a **dead file**. For files it does
@@ -83,7 +92,12 @@ entry points instead. `deadcode` follows the same model:
    plausibly names a candidate, the finding is downgraded to
    `uncertain-file`/`uncertain-export` — always reported, never gated.
 
-Known scope boundaries: only script files get reachability (CSS/SQL aren't
+A `.vue`/`.svelte`/`.html` file can't be read into, so a file or export only
+those mention by name is reported as `uncertain-*` rather than dead.
+
+Known scope boundaries: only the root `package.json` and `tsconfig.json` are
+read (monorepo workspace packages need their entries in `deadcode.entry`);
+only script files get reachability (CSS/SQL aren't
 attempted — a different, harder problem); and `import * as ns` conservatively marks
 every export of its target as used rather than tracking which property is
 actually read off `ns`, trading a few missed dead exports for zero false
@@ -249,10 +263,12 @@ malformed CSS rule, for instance) counts as uncovered and is listed in
 npm test           # type-checks and runs the full test suite (node --test)
 ```
 
-83 tests cover the tree edit distance algorithm (including a brute-force
+108 tests cover the tree edit distance algorithm (including a brute-force
 cross-check on random trees), clustering, every detector, coverage
 accounting, config validation, the merge/de-duplication logic, baseline
 fingerprinting, and the CLI's exit codes end-to-end. `test/deadcode.test.ts`
 adds coverage for the dead-code detector specifically: the transitive
 dead-file case, mutual recursion, dead exports, barrel re-exports, and the
-uncertain-confidence downgrade — run `npm test` for the current total.
+uncertain-confidence downgrade; `test/entrypoints.test.ts` covers entry-point
+resolution (tool config files, tsconfig output mapping, scripts, framework
+conventions) — run `npm test` for the current total.

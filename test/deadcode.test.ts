@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import { DEFAULT_CONFIG } from '../src/config.js';
 import { createDeadCodeDetector } from '../src/detectors/deadcode.js';
 import { collectInventory } from '../src/inventory.js';
-import { makeRepo, sourceFile } from './helpers.js';
+import { detectDeadCode, makeRepo, sourceFile } from './helpers.js';
 
 // package.json lookups against this root fail (ENOENT) and are tolerated; every test sets `entry`
 // explicitly instead, so resolution never depends on auto-detection or a real filesystem.
@@ -111,5 +111,52 @@ describe('deadcode detector', () => {
       'entry.ts': `export const x = 1;\n`,
     });
     assert.match(notes[0], /entry\.ts/);
+  });
+
+  it('resolves tsconfig `paths` aliases, so a file imported only through an alias is live', async () => {
+    const { deadCode } = await detectDeadCode({
+      'package.json': JSON.stringify({ main: 'src/index.js' }),
+      'tsconfig.json': JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@/*': ['src/*'] } } }),
+      'src/index.ts': `import { format } from '@/lib/format';\nformat();\n`,
+      'src/lib/format.ts': `export function format(): void {}\n`,
+      'src/lib/orphan.ts': `export const orphan = 1;\n`,
+    });
+    assert.deepEqual(deadCode.map((f) => f.location.path), ['src/lib/orphan.ts']);
+  });
+
+  it('counts `export * as ns from` as a reference to the target file', async () => {
+    const { deadCode } = await run({
+      'entry.ts': `import { ns } from './barrel.js';\nns;\n`,
+      'barrel.ts': `export * as ns from './impl.js';\n`,
+      'impl.ts': `export function thing(): void {}\n`,
+    });
+    assert.deepEqual(deadCode, []);
+  });
+
+  it('counts `import x = require()` as a reference to the target file', async () => {
+    const { deadCode } = await run({
+      'entry.ts': `import legacy = require('./legacy.js');\nlegacy;\n`,
+      'legacy.ts': `export const value = 1;\n`,
+    });
+    assert.deepEqual(deadCode, []);
+  });
+
+  it('counts an `import()` type reference as a reference to the target file', async () => {
+    const { deadCode } = await run({
+      'entry.ts': `export type Shape = import('./shape.js').Shape;\n`,
+      'shape.ts': `export interface Shape { size: number }\n`,
+    });
+    assert.deepEqual(deadCode, []);
+  });
+
+  it('reports a file only a .vue template mentions as uncertain, not dead', async () => {
+    // The graph cannot read into a .vue file, so an import written there is invisible to it.
+    const { deadCode } = await run({
+      'entry.ts': `export const start = 1;\n`,
+      'composable.ts': `export const useThing = 1;\n`,
+      'Thing.vue': `<script setup>import { useThing } from './composable'</script>\n`,
+    });
+    const finding = deadCode.find((f) => f.location.path === 'composable.ts');
+    assert.equal(finding?.kind, 'uncertain-file');
   });
 });

@@ -16,10 +16,12 @@
   },
   "dependencies": {
     "jscpd": "^4.0.5",
+    "picomatch": "^4.0.7",
     "postcss": "^8.5.10",
     "typescript": "^6.0.3"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "@types/picomatch": "^4.0.3"
   }
 }
