@@ -84,9 +84,12 @@ members compare to each other:
    ignored, so common patterns don't create false candidate explosions.
 6. **Precise confirmation** — each candidate pair is checked with a
    size-ratio upper bound first (cheap), then, if that doesn't rule it out,
-   with **Zhang–Shasha tree edit distance** on the normalized trees. Similarity
-   is `1 − (edit distance / max(size_a, size_b))`. A pair is only flagged if
-   this similarity is **≥ 0.85** by default.
+   with **Zhang–Shasha tree edit distance** on the normalized trees. The
+   distance is only computed up to the number of edits the threshold allows
+   (a diagonal band, widened until it fits), and each pair is read in whichever
+   child order gives the smaller table; the result is the same exact distance.
+   Similarity is `1 − (edit distance / max(size_a, size_b))`. A pair is only
+   flagged if this similarity is **≥ 0.85** by default.
 7. **Oversized-unit handling** — units above a node-count ceiling (default
    5,000 AST nodes) skip tree edit distance entirely and are matched by exact
    hash only; this is reported in `report.notes`, not silently dropped, so a

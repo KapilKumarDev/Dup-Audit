@@ -306,7 +306,12 @@ export function createStructureDetector(settings: Config['structure']): Detector
         features: (unit) => (unit.size <= settings.maxTedNodes ? unit.features : []),
         candidates: { minJaccard: settings.candidateJaccard, maxPosting: settings.maxPosting },
         upperBound: (a, b) => Math.min(a.size, b.size) / Math.max(a.size, b.size),
-        similarity: (a, b) => 1 - editDistance(prepare(a), prepare(b)) / Math.max(a.size, b.size),
+        similarity: (a, b) => {
+          const larger = Math.max(a.size, b.size);
+          // Beyond this many edits the pair is under the threshold, so the exact distance is not needed.
+          const withinThreshold = Math.ceil((1 - settings.similarity) * larger);
+          return 1 - editDistance(prepare(a), prepare(b), withinThreshold) / larger;
+        },
         threshold: settings.similarity,
       });
 

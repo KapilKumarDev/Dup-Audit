@@ -263,7 +263,7 @@ malformed CSS rule, for instance) counts as uncovered and is listed in
 npm test           # type-checks and runs the full test suite (node --test)
 ```
 
-108 tests cover the tree edit distance algorithm (including a brute-force
+111 tests cover the tree edit distance algorithm (including a brute-force
 cross-check on random trees), clustering, every detector, coverage
 accounting, config validation, the merge/de-duplication logic, baseline
 fingerprinting, and the CLI's exit codes end-to-end. `test/deadcode.test.ts`
