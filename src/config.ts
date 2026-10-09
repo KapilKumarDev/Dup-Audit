@@ -98,7 +98,7 @@ export const DEFAULT_CONFIG: Config = {
   tokens: {
     extensions: ['.ts', '.tsx', '.js', '.jsx', '.css', '.scss', '.less', '.sql', '.html', '.htm'],
     minTokens: 60,
-    minLines: 6,
+    minLines: 5,
   },
   structure: {
     minNodes: 40,
@@ -133,7 +133,7 @@ function merge(defaults: unknown, user: unknown, keyPath: string): unknown {
     const merged: JsonObject = { ...defaults };
     for (const [key, value] of Object.entries(user)) {
       const childPath = keyPath === '' ? key : `${keyPath}.${key}`;
-      if (!(key in defaults)) throw new ConfigError(`Unknown config key "${childPath}"`);
+      if (!Object.hasOwn(defaults, key)) throw new ConfigError(`Unknown config key "${childPath}"`);
       merged[key] = merge(defaults[key], value, childPath);
     }
     return merged;
@@ -199,6 +199,7 @@ export async function loadConfig(root: string, explicitPath?: string): Promise<C
   }
 
   const config = merge(defaults, parsed, '') as Config;
+  config.detectors = [...new Set(config.detectors)];
   validate(config);
   return config;
 }

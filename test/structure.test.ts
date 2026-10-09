@@ -16,6 +16,14 @@ const run = (files: Record<string, string>, overrides: Partial<typeof DEFAULT_CO
   );
 
 describe('structure detector', () => {
+  it('reports a file with syntax errors as a failure and leaves it uncovered', async () => {
+    const { analyzed, failures } = await run({ 'good.ts': ORDER_TOTAL, 'broken.ts': 'export function (((;\n' });
+    assert.deepEqual(analyzed, ['good.ts']);
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0].path, 'broken.ts');
+    assert.match(failures[0].message, /line 1/);
+  });
+
   it('reports identical copies, ignoring comments and whitespace', async () => {
     const commented = `// copied from billing\n${ORDER_TOTAL.replace('let total = 0;', 'let   total = 0; // running sum')}`;
     const { clusters } = await run({ 'a.ts': ORDER_TOTAL, 'b.ts': commented });

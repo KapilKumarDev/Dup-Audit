@@ -108,19 +108,21 @@ export function createDeadCodeDetector(root: string, settings: Config['deadcode'
     id: 'deadcode',
     async run(files: readonly SourceFile[], excludedFiles: readonly SourceFile[] = []): Promise<DetectorResult> {
       const originalPaths = new Set(files.map((file) => file.path));
-      const testFiles = settings.treatTestsAsEntry
-        ? excludedFiles.filter((file) => TEST_PATH.test(file.path) && !originalPaths.has(file.path))
-        : [];
+      const isTest = (file: SourceFile): boolean => settings.treatTestsAsEntry && TEST_PATH.test(file.path);
+      // Excluded tests are only in the graph to serve as extra entry points; tests that are among the
+      // audited files are already in it. Either way every test file is an entry point.
+      const extraTestFiles = excludedFiles.filter((file) => isTest(file) && !originalPaths.has(file.path));
+      const testPaths = [...files.filter(isTest), ...extraTestFiles].map((file) => file.path);
       const lines = new Map(files.map((file) => [file.path, file.lines]));
       const options = loadCompilerOptions(root);
-      const graph = buildModuleGraph(testFiles.length > 0 ? [...files, ...testFiles] : files, { root, options });
+      const graph = buildModuleGraph(extraTestFiles.length > 0 ? [...files, ...extraTestFiles] : files, { root, options });
       const { program, toolOwned, basis } = await resolveEntryPoints(root, files, settings, options);
 
       if (program.length === 0) {
         return {
           clusters: [],
           deadCode: [],
-          analyzed: [...files.map((file) => file.path)],
+          analyzed: [],
           failures: [],
           notes: [
             'dead-code analysis skipped: no entry points could be resolved (checked package.json fields and scripts, ' +
@@ -131,7 +133,7 @@ export function createDeadCodeDetector(root: string, settings: Config['deadcode'
       }
 
       const toolNamed = filesNamedBy(graph, toolOwned);
-      const entries = new Set([...program, ...toolOwned, ...toolNamed, ...testFiles.map((file) => file.path)]);
+      const entries = new Set([...program, ...toolOwned, ...toolNamed, ...testPaths]);
       const reachable = reachableFiles(graph, [...entries]);
       const used = usedExportsByFile(graph, reachable);
       const sources = mentionSources(graph, files.filter((file) => TEMPLATE_EXTENSIONS.has(file.ext)));
@@ -189,7 +191,7 @@ export function createDeadCodeDetector(root: string, settings: Config['deadcode'
         analyzed,
         failures: [],
         notes: [
-          `dead-code entry points (${basis}${testFiles.length > 0 ? ' + test files' : ''}): ${program.join(', ')}`,
+          `dead-code entry points (${basis}${testPaths.length > 0 ? ' + test files' : ''}): ${program.join(', ')}`,
           ...(toolNamed.length > 0
             ? [`dead-code treats ${toolNamed.length} file(s) named by a tool config as live: ${toolNamed.join(', ')}`]
             : []),

@@ -9,13 +9,15 @@ import { runAudit } from './pipeline.js';
 import { formatSummary, toSarif } from './report.js';
 
 const USAGE = `Usage:
-  dup-audit [root] [--config <file>] [--out <dir>]
-  dup-audit calibrate [root] [--config <file>] [--out <dir>] [--samples <n>] [--precision-samples <n>] [--seed <n>]
-  dup-audit baseline [root] [--config <file>] [--out <dir>]
+  dup-audit [root] [--config <file>] [--out <dir>] [--min-lines <n>]
+  dup-audit calibrate [root] [--config <file>] [--out <dir>] [--min-lines <n>] [--samples <n>] [--precision-samples <n>] [--seed <n>]
+  dup-audit baseline [root] [--config <file>] [--out <dir>] [--min-lines <n>]
 
   root      Directory inside a git repository (default: current directory)
   --config  Config file (default: <root>/dup-audit.config.json when present)
   --out     Report directory (default: <root>/.dup-audit)
+  --min-lines  Smallest duplicate to report, in lines (default: 5). Overrides tokens.minLines and
+            structure.minLines from the config file; the CSS detector counts declarations instead.
 
 audit exit codes: 0 gates passed, 1 a gate failed, 2 the audit could not run.
 calibrate measures recall by injecting known clones and writes a sample of clusters for a one-time precision review.
@@ -26,10 +28,10 @@ after deliberately accepting or fixing duplication so the file keeps matching in
 const CALIBRATE = 'calibrate';
 const BASELINE = 'baseline';
 
-function integerOption(value: string | undefined, name: string, fallback: number): number {
+function integerOption(value: string | undefined, name: string, fallback: number, min = 1): number {
   if (value === undefined) return fallback;
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`--${name} must be a positive integer`);
+  if (!Number.isInteger(parsed) || parsed < min) throw new Error(`--${name} must be an integer of at least ${min}`);
   return parsed;
 }
 
@@ -40,6 +42,7 @@ async function main(argv: string[]): Promise<number> {
     options: {
       config: { type: 'string' },
       out: { type: 'string' },
+      'min-lines': { type: 'string' },
       samples: { type: 'string' },
       'precision-samples': { type: 'string' },
       seed: { type: 'string' },
@@ -57,6 +60,11 @@ async function main(argv: string[]): Promise<number> {
 
   const root = path.resolve(rest[0] ?? '.');
   const config = await loadConfig(root, values.config);
+  if (values['min-lines'] !== undefined) {
+    const minLines = integerOption(values['min-lines'], 'min-lines', config.structure.minLines);
+    config.tokens.minLines = minLines;
+    config.structure.minLines = minLines;
+  }
   const outputDir = path.resolve(values.out ?? path.join(root, '.dup-audit'));
   await mkdir(outputDir, { recursive: true });
 
@@ -64,7 +72,7 @@ async function main(argv: string[]): Promise<number> {
     const result = await runCalibration(root, config, {
       samples: integerOption(values.samples, 'samples', 200),
       precisionSamples: integerOption(values['precision-samples'], 'precision-samples', 50),
-      seed: integerOption(values.seed, 'seed', 1),
+      seed: integerOption(values.seed, 'seed', 1, 0),
     });
     const { precisionSampleMarkdown, ...summary } = result;
     await writeFile(path.join(outputDir, 'calibration.json'), `${JSON.stringify(summary, null, 2)}\n`);

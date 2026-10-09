@@ -2,3 +2,4 @@ node_modules/
 dist/
 .dup-audit/
 *.zip
+fixes.*

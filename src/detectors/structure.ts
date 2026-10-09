@@ -5,7 +5,7 @@ import { clusterUnits } from '../clustering.js';
 import type { Config } from '../config.js';
 import { compareLocations } from '../locations.js';
 import { editDistance, prepareTree, type PreparedTree, type TedNode } from '../ted.js';
-import type { CloneCluster, Detector, DetectorResult, Location, SourceFile } from '../types.js';
+import type { CloneCluster, Detector, DetectorResult, Failure, Location, SourceFile } from '../types.js';
 
 const SCRIPT_KINDS = new Map<string, ts.ScriptKind>([
   ['.ts', ts.ScriptKind.TS],
@@ -246,6 +246,18 @@ export function parse(file: SourceFile): ts.SourceFile | undefined {
   return ts.createSourceFile(file.path, file.text, ts.ScriptTarget.Latest, true, scriptKind);
 }
 
+/**
+ * The first syntax error of a parsed file as "line N: message", or undefined when it parsed cleanly.
+ * createSourceFile never throws; the parser leaves its errors on a `parseDiagnostics` property that
+ * TypeScript's public typings do not declare (the test for this behaviour catches a rename).
+ */
+function firstSyntaxError(sourceFile: ts.SourceFile): string | undefined {
+  const [first] = (sourceFile as ts.SourceFile & { parseDiagnostics: readonly ts.DiagnosticWithLocation[] }).parseDiagnostics;
+  if (first === undefined) return undefined;
+  const line = sourceFile.getLineAndCharacterOfPosition(first.start).line + 1;
+  return `syntax error at line ${line}: ${ts.flattenDiagnosticMessageText(first.messageText, '\n')}`;
+}
+
 /** Line range of a unit, 1-based and inclusive. */
 export function locate(site: UnitSite, sourceFile: ts.SourceFile): { startLine: number; endLine: number } {
   return {
@@ -288,10 +300,16 @@ export function createStructureDetector(settings: Config['structure']): Detector
     async run(files: readonly SourceFile[]): Promise<DetectorResult> {
       const interner = new Interner();
       const analyzed: string[] = [];
+      const failures: Failure[] = [];
       const units: Unit[] = [];
       for (const file of files) {
         const sourceFile = parse(file);
         if (sourceFile === undefined) continue;
+        const syntaxError = firstSyntaxError(sourceFile);
+        if (syntaxError !== undefined) {
+          failures.push({ path: file.path, message: syntaxError });
+          continue;
+        }
         analyzed.push(file.path);
         units.push(...extractUnits(sourceFile, settings, interner));
       }
@@ -332,7 +350,7 @@ export function createStructureDetector(settings: Config['structure']): Detector
         ),
         deadCode: [],
         analyzed,
-        failures: [],
+        failures,
         notes,
       };
     },

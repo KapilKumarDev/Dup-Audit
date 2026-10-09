@@ -135,6 +135,11 @@ node dist/src/cli.js calibrate /path/to/repo --samples 200
 # Record every cluster found right now, so later audits can gate on new
 # duplication only (see "Adopting the gate on an existing codebase" below)
 node dist/src/cli.js baseline /path/to/repo
+
+# Smallest duplicate to report, in lines (default 5). Works on all three
+# commands and overrides tokens.minLines and structure.minLines from the config
+# file; the CSS detector counts declarations (css.minDeclarations) instead.
+node dist/src/cli.js /path/to/repo --min-lines 10
 ```
 
 Both commands require the target to be a git repository (file listing and
@@ -218,9 +223,11 @@ baseline and is reported as new, since it's now unmatchable by path.
 
 Coverage is lines actually examined by at least one detector, divided by
 total lines in tracked-and-not-ignored files with a configured extension —
-computed and gated every run, not asserted. A file that fails to parse (a
-malformed CSS rule, for instance) counts as uncovered and is listed in
-`report.failures`, never silently dropped.
+computed and gated every run, not asserted. A file that a detector cannot
+parse (a malformed CSS rule or a TS/JS syntax error, for instance) is not
+counted as examined by that detector and is listed in `report.failures`, never
+silently dropped. It stays uncovered unless another detector, such as the token
+detector, examined its text.
 
 ## Limitations (read before trusting a "clean" report)
 

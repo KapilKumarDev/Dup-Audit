@@ -75,8 +75,9 @@ describe('deadcode detector', () => {
   });
 
   it('skips the run and notes why when no entry point can be resolved', async () => {
-    const { deadCode, notes } = await run({ 'a.ts': 'export const x = 1;\n' }, { entry: [] });
+    const { deadCode, notes, analyzed } = await run({ 'a.ts': 'export const x = 1;\n' }, { entry: [] });
     assert.equal(deadCode.length, 0);
+    assert.deepEqual(analyzed, [], 'a skipped analysis examined nothing, so it must not count as coverage');
     assert.match(notes[0], /no entry points could be resolved/);
   });
 
@@ -104,6 +105,30 @@ describe('deadcode detector', () => {
       'lib.ts': `export function helper(): number { return 1; }\nexport function run(): number { return helper() + helper(); }\n`,
     });
     assert.equal(deadCode.some((f) => f.location.name === 'helper'), false);
+  });
+
+  it('does not report the local name of a named default export as a separate dead export', async () => {
+    // `export default function foo` exports only 'default'; `foo` is a local binding, not an export.
+    const { deadCode } = await run({
+      'entry.ts': `import foo from './lib.js';\nfoo();\n`,
+      'lib.ts': `export default function foo(): number { return 1; }\n`,
+    });
+    assert.deepEqual(deadCode, []);
+  });
+
+  it('treats a test file as an entry point even when it is among the audited files', async () => {
+    // A custom shared `ignore` list that no longer excludes tests leaves them in `files`; they must not
+    // be reported as dead, and what they import must stay live.
+    const { deadCode, notes } = await run(
+      {
+        'entry.ts': `import './lib.js';\n`,
+        'lib.ts': `export function helper(): number { return 1; }\n`,
+        'lib.test.ts': `import { helper } from './lib.js';\nhelper();\n`,
+      },
+      { treatTestsAsEntry: true },
+    );
+    assert.deepEqual(deadCode, []);
+    assert.match(notes[0], /\+ test files/);
   });
 
   it('reports the resolved entry points and basis on a normal run', async () => {

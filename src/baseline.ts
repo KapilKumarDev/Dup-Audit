@@ -32,7 +32,7 @@ export function filesByPath(files: readonly SourceFile[]): Map<string, SourceFil
 function memberFingerprint(location: Location, files: ReadonlyMap<string, SourceFile>): string {
   const file = files.get(location.path);
   if (file === undefined) return `missing:${location.path}:${location.startLine}-${location.endLine}`;
-  const lines = file.text.split('\n').slice(location.startLine - 1, location.endLine);
+  const lines = file.text.split(/\r?\n/).slice(location.startLine - 1, location.endLine);
   return sha256(`${location.path}\n${lines.join('\n')}`);
 }
 

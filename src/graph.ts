@@ -128,7 +128,7 @@ function extractFile(sourceFile: ts.SourceFile): FileExtraction {
     if (hasModifier(node, ts.SyntaxKind.ExportKeyword)) {
       if (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) {
         if (hasModifier(node, ts.SyntaxKind.DefaultKeyword)) addExport('default', node);
-        if (node.name !== undefined) addExport(node.name.text, node);
+        else if (node.name !== undefined) addExport(node.name.text, node);
       } else if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node) || ts.isEnumDeclaration(node)) {
         addExport(node.name.text, node);
       } else if (ts.isVariableStatement(node)) {

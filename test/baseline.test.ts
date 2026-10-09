@@ -29,6 +29,16 @@ describe('fingerprintCluster', () => {
     assert.equal(fingerprintCluster(c, beforeIndex), fingerprintCluster(shifted, afterIndex));
   });
 
+  it('is unaffected by the line-ending style of the checkout', () => {
+    const lf = [sourceFile('a.ts', DUP_A), sourceFile('b.ts', DUP_A)];
+    const crlf = lf.map((file) => sourceFile(file.path, file.text.replaceAll('\n', '\r\n')));
+    const c = cluster(at('a.ts', 1, 3), at('b.ts', 1, 3));
+    assert.equal(
+      fingerprintCluster(c, new Map(lf.map((f) => [f.path, f]))),
+      fingerprintCluster(c, new Map(crlf.map((f) => [f.path, f]))),
+    );
+  });
+
   it('changes when the duplicated content itself changes', () => {
     const files = new Map([sourceFile('a.ts', DUP_A), sourceFile('b.ts', DUP_A)].map((f) => [f.path, f]));
     const filesChanged = new Map(

@@ -25,6 +25,18 @@ describe('loadConfig', () => {
     assert.ok(DEFAULT_CONFIG.ignore.length > 1);
   });
 
+  it('collapses a detector listed more than once so its findings are not double-counted', async () => {
+    const config = await loadConfig(withConfig({ detectors: ['structure', 'css', 'structure'] }));
+    assert.deepEqual(config.detectors, ['structure', 'css']);
+  });
+
+  it('rejects keys inherited from Object.prototype as unknown', async () => {
+    for (const key of ['__proto__', 'constructor']) {
+      const root = makeRepo({ [CONFIG_FILE]: `{ "${key}": {} }` });
+      await assert.rejects(loadConfig(root), new RegExp(`Unknown config key "${key}"`));
+    }
+  });
+
   it('rejects unknown keys so typos cannot silently disable a setting', async () => {
     await assert.rejects(loadConfig(withConfig({ structure: { similarty: 0.9 } })), /Unknown config key "structure.similarty"/);
   });

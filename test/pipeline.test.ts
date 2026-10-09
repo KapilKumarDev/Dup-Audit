@@ -57,6 +57,14 @@ describe('runAudit', () => {
     assert.equal(passed, false);
   });
 
+  it('fails the coverage gate when dead-code analysis is skipped for lack of entry points', async () => {
+    const root = makeRepo({ 'a.vue': '<template>\n<div/>\n</template>\n', 'b.svelte': '<div>hi</div>\n' });
+    const { report, passed } = await runAudit(root, config({ detectors: ['deadcode'] }));
+    assert.equal(report.coverage.percent, 0);
+    assert.equal(report.gates.coverage.passed, false);
+    assert.equal(passed, false);
+  });
+
   it('fails the duplication gate when duplication exceeds the limit', async () => {
     const root = makeRepo(repoFiles);
     const { report, passed } = await runAudit(root, config({ gates: { minCoveragePercent: 90, maxDuplicationPercent: 1 } }));
@@ -121,6 +129,35 @@ describe('cli', () => {
     const report = JSON.parse(readFileSync(path.join(outDir, 'report.json'), 'utf8'));
     assert.equal(report.gates.duplication.passed, false);
     assert.equal(JSON.parse(readFileSync(path.join(outDir, 'report.sarif'), 'utf8')).version, '2.1.0');
+  });
+
+  it('--min-lines raises the smallest duplicate both clone detectors report', () => {
+    const root = makeRepo({
+      'a.ts': ORDER_TOTAL,
+      'b.ts': ORDER_TOTAL,
+      [CONFIG_FILE]: JSON.stringify({ detectors: ['structure', 'tokens'] }),
+    });
+    const clusterCount = (...args: string[]): number => {
+      const outDir = path.join(root, `out-${args.length}`);
+      const result = run(root, '--out', outDir, ...args);
+      assert.notEqual(result.status, 2, result.stderr);
+      return JSON.parse(readFileSync(path.join(outDir, 'report.json'), 'utf8')).duplication.clusterCount;
+    };
+    assert.ok(clusterCount() > 0, 'a 12-line duplicate is found by default');
+    assert.equal(clusterCount('--min-lines', '13'), 0);
+  });
+
+  it('--min-lines rejects values below 1', () => {
+    const result = run(makeRepo(repoFiles), '--min-lines', '0');
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /--min-lines must be an integer of at least 1/);
+  });
+
+  it('accepts 0 as a calibrate seed', () => {
+    const root = makeRepo(repoFiles);
+    const args = ['calibrate', root, '--seed', '0', '--samples', '5', '--precision-samples', '5', '--out', path.join(root, 'out')];
+    const result = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
   });
 
   it('exits 0 when every gate passes', () => {
