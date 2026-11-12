@@ -1,11 +1,11 @@
-import path from 'node:path';
-import ts from 'typescript';
-import { parse } from './detectors/structure.js';
-import { toPosix } from './tsconfig.js';
-import type { SourceFile } from './types.js';
+import path from "node:path";
+import ts from "typescript";
+import { parse } from "./detectors/structure.js";
+import { toPosix } from "./tsconfig.js";
+import type { SourceFile } from "./types.js";
 
 /** How one file causes another to load. `re-export` covers both `export * from` and `export { x } from`. */
-export type EdgeKind = 'import' | 'require' | 'dynamic-import' | 're-export';
+export type EdgeKind = "import" | "require" | "dynamic-import" | "re-export";
 
 export interface ImportEdge {
   to: string;
@@ -53,18 +53,36 @@ export interface ResolutionContext {
  * non-code asset (`.json`, `.svg`), or a file the `ignore` list removed all come back `undefined`, which
  * is expected and not an error.
  */
-function createResolver(known: ReadonlySet<string>, { root, options }: ResolutionContext): (from: string, specifier: string) => string | undefined {
+function createResolver(
+  known: ReadonlySet<string>,
+  { root, options }: ResolutionContext,
+): (from: string, specifier: string) => string | undefined {
   const rootDir = toPosix(root);
-  const toRelative = (absolute: string): string => path.posix.relative(rootDir, absolute);
+  const toRelative = (absolute: string): string =>
+    path.posix.relative(rootDir, absolute);
   const host: ts.ModuleResolutionHost = {
     fileExists: (absolute) => known.has(toRelative(absolute)),
     readFile: () => undefined,
     getCurrentDirectory: () => rootDir,
   };
-  const cache = ts.createModuleResolutionCache(rootDir, (fileName) => fileName, options);
+  const cache = ts.createModuleResolutionCache(
+    rootDir,
+    (fileName) => fileName,
+    options,
+  );
   return (from, specifier) => {
-    const { resolvedModule } = ts.resolveModuleName(specifier, path.posix.join(rootDir, from), options, host, cache);
-    if (resolvedModule === undefined || resolvedModule.isExternalLibraryImport === true) return undefined;
+    const { resolvedModule } = ts.resolveModuleName(
+      specifier,
+      path.posix.join(rootDir, from),
+      options,
+      host,
+      cache,
+    );
+    if (
+      resolvedModule === undefined ||
+      resolvedModule.isExternalLibraryImport === true
+    )
+      return undefined;
     const resolved = toRelative(resolvedModule.resolvedFileName);
     return known.has(resolved) ? resolved : undefined;
   };
@@ -88,22 +106,26 @@ function declaredNames(name: ts.BindingName): string[] {
   if (ts.isIdentifier(name)) return [name.text];
   const names: string[] = [];
   for (const element of name.elements) {
-    if (!ts.isOmittedExpression(element)) names.push(...declaredNames(element.name));
+    if (!ts.isOmittedExpression(element))
+      names.push(...declaredNames(element.name));
   }
   return names;
 }
 
 const hasModifier = (node: ts.Node, kind: ts.SyntaxKind): boolean =>
-  ts.canHaveModifiers(node) && (ts.getModifiers(node)?.some((modifier) => modifier.kind === kind) ?? false);
+  ts.canHaveModifiers(node) &&
+  (ts.getModifiers(node)?.some((modifier) => modifier.kind === kind) ?? false);
 
 function importNames(clause: ts.ImportClause | undefined): string[] {
   if (clause === undefined) return [];
   const names: string[] = [];
-  if (clause.name !== undefined) names.push('default');
+  if (clause.name !== undefined) names.push("default");
   const bindings = clause.namedBindings;
   if (bindings !== undefined) {
-    if (ts.isNamespaceImport(bindings)) names.push('*');
-    else for (const element of bindings.elements) names.push((element.propertyName ?? element.name).text);
+    if (ts.isNamespaceImport(bindings)) names.push("*");
+    else
+      for (const element of bindings.elements)
+        names.push((element.propertyName ?? element.name).text);
   }
   return names;
 }
@@ -115,7 +137,9 @@ function extractFile(sourceFile: ts.SourceFile): FileExtraction {
   const stringLiterals: string[] = [];
   const identifierCounts = new Map<string, number>();
 
-  const lineOf = (node: ts.Node): number => sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+  const lineOf = (node: ts.Node): number =>
+    sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line +
+    1;
   const addExport = (name: string, node: ts.Node): void => {
     if (!exports.has(name)) exports.set(name, lineOf(node));
   };
@@ -127,33 +151,60 @@ function extractFile(sourceFile: ts.SourceFile): FileExtraction {
   const visitDeclaration = (node: ts.Node): void => {
     if (hasModifier(node, ts.SyntaxKind.ExportKeyword)) {
       if (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) {
-        if (hasModifier(node, ts.SyntaxKind.DefaultKeyword)) addExport('default', node);
+        if (hasModifier(node, ts.SyntaxKind.DefaultKeyword))
+          addExport("default", node);
         else if (node.name !== undefined) addExport(node.name.text, node);
-      } else if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node) || ts.isEnumDeclaration(node)) {
+      } else if (
+        ts.isInterfaceDeclaration(node) ||
+        ts.isTypeAliasDeclaration(node) ||
+        ts.isEnumDeclaration(node)
+      ) {
         addExport(node.name.text, node);
       } else if (ts.isVariableStatement(node)) {
         for (const declaration of node.declarationList.declarations) {
-          for (const name of declaredNames(declaration.name)) addExport(name, node);
+          for (const name of declaredNames(declaration.name))
+            addExport(name, node);
         }
       }
     } else if (ts.isExportAssignment(node)) {
-      addExport('default', node);
+      addExport("default", node);
     } else if (ts.isExportDeclaration(node)) {
       const specifier = node.moduleSpecifier;
-      const fromModule = specifier !== undefined && ts.isStringLiteral(specifier) ? specifier.text : undefined;
+      const fromModule =
+        specifier !== undefined && ts.isStringLiteral(specifier)
+          ? specifier.text
+          : undefined;
       if (node.exportClause === undefined) {
         // `export * from './x'`: forwards every export of './x'; only meaningful if this file is itself reachable.
         // Not a named export of this file, so it isn't added to `exports` - only the forwarding edge matters.
-        if (fromModule !== undefined) rawEdges.push({ specifier: fromModule, kind: 're-export', names: ['*'] });
+        if (fromModule !== undefined)
+          rawEdges.push({
+            specifier: fromModule,
+            kind: "re-export",
+            names: ["*"],
+          });
       } else if (ts.isNamespaceExport(node.exportClause)) {
         // `export * as ns from './x'`: exposes all of './x' under one name of this file.
-        if (fromModule !== undefined) rawEdges.push({ specifier: fromModule, kind: 're-export', names: ['*'] });
+        if (fromModule !== undefined)
+          rawEdges.push({
+            specifier: fromModule,
+            kind: "re-export",
+            names: ["*"],
+          });
         addExport(node.exportClause.name.text, node);
       } else if (ts.isNamedExports(node.exportClause)) {
-        const publicNames = node.exportClause.elements.map((element) => element.name.text);
+        const publicNames = node.exportClause.elements.map(
+          (element) => element.name.text,
+        );
         if (fromModule !== undefined) {
-          const sourceNames = node.exportClause.elements.map((element) => (element.propertyName ?? element.name).text);
-          rawEdges.push({ specifier: fromModule, kind: 're-export', names: sourceNames });
+          const sourceNames = node.exportClause.elements.map(
+            (element) => (element.propertyName ?? element.name).text,
+          );
+          rawEdges.push({
+            specifier: fromModule,
+            kind: "re-export",
+            names: sourceNames,
+          });
         }
         for (const name of publicNames) addExport(name, node);
       }
@@ -162,35 +213,68 @@ function extractFile(sourceFile: ts.SourceFile): FileExtraction {
 
   const visit = (node: ts.Node): void => {
     visitDeclaration(node);
-    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
-      rawEdges.push({ specifier: node.moduleSpecifier.text, kind: 'import', names: importNames(node.importClause) });
+    if (
+      ts.isImportDeclaration(node) &&
+      ts.isStringLiteral(node.moduleSpecifier)
+    ) {
+      rawEdges.push({
+        specifier: node.moduleSpecifier.text,
+        kind: "import",
+        names: importNames(node.importClause),
+      });
       edgeLiterals.add(node.moduleSpecifier);
-    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier !== undefined && ts.isStringLiteral(node.moduleSpecifier)) {
+    } else if (
+      ts.isExportDeclaration(node) &&
+      node.moduleSpecifier !== undefined &&
+      ts.isStringLiteral(node.moduleSpecifier)
+    ) {
       edgeLiterals.add(node.moduleSpecifier); // the edge itself is recorded by visitDeclaration's export handling
-    } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+    } else if (
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference)
+    ) {
       // `import x = require('./x')`
       const { expression } = node.moduleReference;
       if (ts.isStringLiteral(expression)) {
-        rawEdges.push({ specifier: expression.text, kind: 'require', names: ['*'] });
+        rawEdges.push({
+          specifier: expression.text,
+          kind: "require",
+          names: ["*"],
+        });
         edgeLiterals.add(expression);
       }
     } else if (ts.isImportTypeNode(node)) {
       // `import('./x').Thing` used as a type: no runtime edge, but the file is plainly referenced.
       const { argument } = node;
-      if (ts.isLiteralTypeNode(argument) && ts.isStringLiteral(argument.literal)) {
-        rawEdges.push({ specifier: argument.literal.text, kind: 'import', names: ['*'] });
+      if (
+        ts.isLiteralTypeNode(argument) &&
+        ts.isStringLiteral(argument.literal)
+      ) {
+        rawEdges.push({
+          specifier: argument.literal.text,
+          kind: "import",
+          names: ["*"],
+        });
         edgeLiterals.add(argument.literal);
       }
     } else if (ts.isCallExpression(node)) {
-      const isRequire = ts.isIdentifier(node.expression) && node.expression.text === 'require';
-      const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+      const isRequire =
+        ts.isIdentifier(node.expression) && node.expression.text === "require";
+      const isDynamicImport =
+        node.expression.kind === ts.SyntaxKind.ImportKeyword;
       if (isRequire || isDynamicImport) {
         const [argument] = node.arguments;
         if (argument !== undefined && ts.isStringLiteralLike(argument)) {
-          rawEdges.push({ specifier: argument.text, kind: isRequire ? 'require' : 'dynamic-import', names: ['*'] });
+          rawEdges.push({
+            specifier: argument.text,
+            kind: isRequire ? "require" : "dynamic-import",
+            names: ["*"],
+          });
           edgeLiterals.add(argument);
         } else if (argument !== undefined) {
-          dynamicSpecifiers.push(argument.getText(sourceFile).slice(0, MAX_LITERAL_LENGTH));
+          dynamicSpecifiers.push(
+            argument.getText(sourceFile).slice(0, MAX_LITERAL_LENGTH),
+          );
         }
       }
     } else if (
@@ -201,22 +285,36 @@ function extractFile(sourceFile: ts.SourceFile): FileExtraction {
     ) {
       stringLiterals.push(node.text);
     }
-    if (ts.isIdentifier(node)) identifierCounts.set(node.text, (identifierCounts.get(node.text) ?? 0) + 1);
+    if (ts.isIdentifier(node))
+      identifierCounts.set(
+        node.text,
+        (identifierCounts.get(node.text) ?? 0) + 1,
+      );
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
 
-  return { rawEdges, dynamicSpecifiers, exports, stringLiterals, identifierCounts };
+  return {
+    rawEdges,
+    dynamicSpecifiers,
+    exports,
+    stringLiterals,
+    identifierCounts,
+  };
 }
 
 /** Builds the whole-program import graph for every TS/JS file among `files`; other extensions are ignored. */
-export function buildModuleGraph(files: readonly SourceFile[], resolution: ResolutionContext): ModuleGraph {
+export function buildModuleGraph(
+  files: readonly SourceFile[],
+  resolution: ResolutionContext,
+): ModuleGraph {
   const known = new Set(files.map((file) => file.path));
   const resolve = createResolver(known, resolution);
   const extractions = new Map<string, FileExtraction>();
   for (const file of files) {
     const sourceFile = parse(file);
-    if (sourceFile !== undefined) extractions.set(file.path, extractFile(sourceFile));
+    if (sourceFile !== undefined)
+      extractions.set(file.path, extractFile(sourceFile));
   }
 
   const nodes = new Map<string, FileGraphNode>();
@@ -224,7 +322,8 @@ export function buildModuleGraph(files: readonly SourceFile[], resolution: Resol
     const edges: ImportEdge[] = [];
     for (const raw of extraction.rawEdges) {
       const to = resolve(filePath, raw.specifier);
-      if (to !== undefined && to !== filePath) edges.push({ to, kind: raw.kind, names: raw.names });
+      if (to !== undefined && to !== filePath)
+        edges.push({ to, kind: raw.kind, names: raw.names });
     }
     nodes.set(filePath, {
       edges,

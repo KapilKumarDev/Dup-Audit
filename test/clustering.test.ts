@@ -1,10 +1,10 @@
-import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { findCandidatePairs } from '../src/candidates.js';
-import { clusterUnits } from '../src/clustering.js';
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { findCandidatePairs } from "../src/candidates.js";
+import { clusterUnits } from "../src/clustering.js";
 
-describe('findCandidatePairs', () => {
-  it('reports pairs above the Jaccard threshold with their exact overlap ratio', () => {
+describe("findCandidatePairs", () => {
+  it("reports pairs above the Jaccard threshold with their exact overlap ratio", () => {
     const pairs = findCandidatePairs(
       [
         [1, 2, 3, 4],
@@ -18,10 +18,20 @@ describe('findCandidatePairs', () => {
     assert.equal(pairs[0].jaccard, 3 / 5);
   });
 
-  it('ignores features shared by more items than maxPosting', () => {
-    const sets = [[1, 100], [2, 100], [3, 100]];
-    assert.equal(findCandidatePairs(sets, { minJaccard: 0.1, maxPosting: 2 }).length, 0);
-    assert.equal(findCandidatePairs(sets, { minJaccard: 0.1, maxPosting: 3 }).length, 3);
+  it("ignores features shared by more items than maxPosting", () => {
+    const sets = [
+      [1, 100],
+      [2, 100],
+      [3, 100],
+    ];
+    assert.equal(
+      findCandidatePairs(sets, { minJaccard: 0.1, maxPosting: 2 }).length,
+      0,
+    );
+    assert.equal(
+      findCandidatePairs(sets, { minJaccard: 0.1, maxPosting: 3 }).length,
+      3,
+    );
   });
 });
 
@@ -32,14 +42,23 @@ interface Unit {
   features: number[];
 }
 
-const unit = (name: string, normalized: string, raw: string, features: number[] = []): Unit => ({
+const unit = (
+  name: string,
+  normalized: string,
+  raw: string,
+  features: number[] = [],
+): Unit => ({
   name,
   normalized,
   raw,
   features,
 });
 
-const cluster = (units: Unit[], similarity: (a: Unit, b: Unit) => number = () => 0, threshold = 0.8) =>
+const cluster = (
+  units: Unit[],
+  similarity: (a: Unit, b: Unit) => number = () => 0,
+  threshold = 0.8,
+) =>
   clusterUnits({
     units,
     normalizedKey: (u) => u.normalized,
@@ -50,45 +69,62 @@ const cluster = (units: Unit[], similarity: (a: Unit, b: Unit) => number = () =>
     threshold,
   });
 
-describe('clusterUnits', () => {
-  it('groups equal normalized keys and labels raw-equal groups identical', () => {
-    const [result] = cluster([unit('a', 'k', 'r'), unit('b', 'k', 'r'), unit('c', 'k', 'r')]);
-    assert.equal(result.kind, 'identical');
+describe("clusterUnits", () => {
+  it("groups equal normalized keys and labels raw-equal groups identical", () => {
+    const [result] = cluster([
+      unit("a", "k", "r"),
+      unit("b", "k", "r"),
+      unit("c", "k", "r"),
+    ]);
+    assert.equal(result.kind, "identical");
     assert.equal(result.similarity, 1);
     assert.equal(result.members.length, 3);
   });
 
-  it('labels groups whose raw keys differ as normalized', () => {
-    const [result] = cluster([unit('a', 'k', 'r1'), unit('b', 'k', 'r2')]);
-    assert.equal(result.kind, 'normalized');
+  it("labels groups whose raw keys differ as normalized", () => {
+    const [result] = cluster([unit("a", "k", "r1"), unit("b", "k", "r2")]);
+    assert.equal(result.kind, "normalized");
   });
 
-  it('never reports a unit that matches nothing', () => {
-    assert.deepEqual(cluster([unit('a', 'k1', 'r1'), unit('b', 'k2', 'r2')]), []);
+  it("never reports a unit that matches nothing", () => {
+    assert.deepEqual(
+      cluster([unit("a", "k1", "r1"), unit("b", "k2", "r2")]),
+      [],
+    );
   });
 
-  it('merges groups whose representatives are confirmed similar and reports the weakest link', () => {
+  it("merges groups whose representatives are confirmed similar and reports the weakest link", () => {
     const units = [
-      unit('a1', 'A', 'a1', [1, 2, 3]),
-      unit('a2', 'A', 'a2', [1, 2, 3]),
-      unit('b', 'B', 'b', [1, 2, 4]),
-      unit('c', 'C', 'c', [1, 2, 5]),
+      unit("a1", "A", "a1", [1, 2, 3]),
+      unit("a2", "A", "a2", [1, 2, 3]),
+      unit("b", "B", "b", [1, 2, 4]),
+      unit("c", "C", "c", [1, 2, 5]),
     ];
-    const similarity = (x: Unit, y: Unit): number => (x.name === 'a1' && y.name === 'b' ? 0.95 : 0.9);
+    const similarity = (x: Unit, y: Unit): number =>
+      x.name === "a1" && y.name === "b" ? 0.95 : 0.9;
     const [result] = cluster(units, similarity);
-    assert.equal(result.kind, 'near-miss');
+    assert.equal(result.kind, "near-miss");
     assert.equal(result.members.length, 4);
     assert.equal(result.similarity, 0.9);
   });
 
-  it('rejects candidate pairs below the confirmation threshold', () => {
-    const units = [unit('a', 'A', 'a', [1, 2, 3]), unit('b', 'B', 'b', [1, 2, 3])];
-    assert.deepEqual(cluster(units, () => 0.79), []);
+  it("rejects candidate pairs below the confirmation threshold", () => {
+    const units = [
+      unit("a", "A", "a", [1, 2, 3]),
+      unit("b", "B", "b", [1, 2, 3]),
+    ];
+    assert.deepEqual(
+      cluster(units, () => 0.79),
+      [],
+    );
   });
 
-  it('skips the precise check when the cheap upper bound is already below the threshold', () => {
+  it("skips the precise check when the cheap upper bound is already below the threshold", () => {
     let calls = 0;
-    const units = [unit('a', 'A', 'a', [1, 2, 3]), unit('b', 'B', 'b', [1, 2, 3])];
+    const units = [
+      unit("a", "A", "a", [1, 2, 3]),
+      unit("b", "B", "b", [1, 2, 3]),
+    ];
     const result = clusterUnits({
       units,
       normalizedKey: (u) => u.normalized,

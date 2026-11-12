@@ -20,14 +20,14 @@ There are four independent detectors. Three own a different notion of
 `deadcode`, asks a related but distinct question — not "is this copied?" but
 "does anything alive actually reach this?"
 
-| # | Detector | What it flags | Languages / files | Confirmation method |
-|---|----------|----------------|--------------------|----------------------|
-| 1 | **`structure`** | Duplicate or near-duplicate **functions, methods, constructors, and accessors** — Type‑1 (exact), Type‑2 (renamed/relabeled), and Type‑3 (near-miss, edited) clones | `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs` | TypeScript compiler AST → normalized tree → Zhang–Shasha tree edit distance |
-| 2 | **`css`** | Duplicate or near-duplicate **CSS rule bodies**, regardless of declaration order, casing, or whitespace | `.css` | PostCSS parse → normalized declaration set → Jaccard similarity |
-| 3 | **`tokens`** | **Verbatim (Type‑1) duplication** in raw token sequences, in any file extension the config lists (this is how `.sql` / PL/pgSQL is covered, since there's no dedicated SQL AST pass) | Any configured extension | `jscpd` token-sequence matching |
-| 4 | **`deadcode`** | **Files and exports that are never really used** — unreachable from any real entry point, even when some other, equally unreachable file still imports them | `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs` | Whole-program import graph → reachability (mark-and-sweep) from configured entry points |
+| #   | Detector        | What it flags                                                                                                                                                                        | Languages / files                                            | Confirmation method                                                                     |
+| --- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| 1   | **`structure`** | Duplicate or near-duplicate **functions, methods, constructors, and accessors** — Type‑1 (exact), Type‑2 (renamed/relabeled), and Type‑3 (near-miss, edited) clones                  | `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs` | TypeScript compiler AST → normalized tree → Zhang–Shasha tree edit distance             |
+| 2   | **`css`**       | Duplicate or near-duplicate **CSS rule bodies**, regardless of declaration order, casing, or whitespace                                                                              | `.css`                                                       | PostCSS parse → normalized declaration set → Jaccard similarity                         |
+| 3   | **`tokens`**    | **Verbatim (Type‑1) duplication** in raw token sequences, in any file extension the config lists (this is how `.sql` / PL/pgSQL is covered, since there's no dedicated SQL AST pass) | Any configured extension                                     | `jscpd` token-sequence matching                                                         |
+| 4   | **`deadcode`**  | **Files and exports that are never really used** — unreachable from any real entry point, even when some other, equally unreachable file still imports them                          | `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs` | Whole-program import graph → reachability (mark-and-sweep) from configured entry points |
 
-`deadcode` isn't a *duplication* detector like the other three — it doesn't
+`deadcode` isn't a _duplication_ detector like the other three — it doesn't
 compare code against other code, it asks "does anything alive actually reach
 this?" It's covered in full in **section 2.4**, since it's the newest and
 most involved piece of the tool.
@@ -42,11 +42,11 @@ static analysis tool covers it reliably, so it isn't attempted.
 Every flagged cluster is labeled with one of three kinds, based on how the
 members compare to each other:
 
-| Kind | Meaning | How it's decided |
-|------|---------|-------------------|
-| `identical` | Same content apart from whitespace/comments | All members hash to the same **raw** key (exact text-level match) |
-| `normalized` | Same after normalization — renamed locals/changed literals (code), or reordered/recased declarations (CSS) | Members share the same **normalized** key but differ in raw form |
-| `near-miss` | Copied, then edited | Members don't share a normalized key, but a precise similarity check (tree edit distance or Jaccard) still clears the configured threshold |
+| Kind         | Meaning                                                                                                    | How it's decided                                                                                                                           |
+| ------------ | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `identical`  | Same content apart from whitespace/comments                                                                | All members hash to the same **raw** key (exact text-level match)                                                                          |
+| `normalized` | Same after normalization — renamed locals/changed literals (code), or reordered/recased declarations (CSS) | Members share the same **normalized** key but differ in raw form                                                                           |
+| `near-miss`  | Copied, then edited                                                                                        | Members don't share a normalized key, but a precise similarity check (tree edit distance or Jaccard) still clears the configured threshold |
 
 ---
 
@@ -119,7 +119,7 @@ members compare to each other:
    sets; a pair is flagged at **≥ 0.85** similarity by default (same
    threshold field as `structure`, configured separately). There's no
    boilerplate cutoff here (unlike `structure`'s shingle cap) — a `display:
-   flex` shared by many rules is treated as genuine overlap, not noise.
+flex` shared by many rules is treated as genuine overlap, not noise.
 
 ### 2.3 `tokens` — verbatim, cross-language matching
 
@@ -135,7 +135,7 @@ members compare to each other:
    reported as uncovered by it, rather than silently mismatched against the
    wrong files.
 5. **De-duplication against `structure`**: a token-level pair is dropped if
-   its two sides already sit inside two different members of the *same*
+   its two sides already sit inside two different members of the _same_
    `structure` cluster — the structural finding already explains that
    duplication with more context, so it isn't reported twice.
 
@@ -170,7 +170,7 @@ checks. `dup-audit`'s `deadcode` detector follows that same model.
    `extends`), in its most permissive `Bundler` mode: extensionless imports,
    the NodeNext convention of writing `./foo.js` to mean `./foo.ts`, and
    directory `index` files.
-2. **Resolve real entry points** — the files that are *run*, not just
+2. **Resolve real entry points** — the files that are _run_, not just
    imported. An explicit `deadcode.entry` glob list replaces the automatic
    sources below, since it says exactly what runs. Otherwise every source is
    added together, because a missing entry point is what produces false
@@ -192,30 +192,30 @@ checks. `dup-audit`'s `deadcode` detector follows that same model.
    reports nothing and says so explicitly, rather than guessing and risking a
    codebase-wide false positive; tool config files alone don't count.
 3. **Mark-and-sweep reachability**: a search over the graph,
-   starting *only* from the resolved entry points. Every file the search
+   starting _only_ from the resolved entry points. Every file the search
    reaches is live. This is the step that solves the "wired to a dead file"
-   problem directly: `helper.ts` above is only reachable *through* `dead.ts`,
+   problem directly: `helper.ts` above is only reachable _through_ `dead.ts`,
    and `dead.ts` is never reached from an entry point, so the search never
    visits either of them — both come out dead, correctly, regardless of how
    many files reference each other inside that unreachable pocket.
 4. **File-level flag**: any parseable file the sweep didn't reach is a
    **dead file**.
 5. **Export-level flag, restricted to live files only**: for every file the
-   sweep *did* reach, the detector separately tracks which of its named
+   sweep _did_ reach, the detector separately tracks which of its named
    exports are actually imported — but only by counting an import that
    itself originates from a live file. An import written inside a dead file
    never counts as "usage," even though the import statement is syntactically
    real — this is what keeps step 3's fix from being undone at the
    export-tracking stage. A `default` export, a barrel re-export
    (`export * from`), and a namespace import (`import * as ns`) are all
-   handled: a namespace import conservatively marks *every* export of its
+   handled: a namespace import conservatively marks _every_ export of its
    target as used, since telling which property the code actually reads off
    `ns` would need full data-flow analysis, and this tool would rather miss
    a real dead export than falsely flag a live one.
 6. **Confidence downgrade, not a guess**: static analysis can't resolve a
-   *computed* reference — `require(pluginPath)`, `import(`./${name}`)`. When
+   _computed_ reference — `require(pluginPath)`, `import(`./${name}`)`. When
    any such computed reference exists anywhere in the codebase, and a
-   *literal* string elsewhere plausibly names a candidate dead file or export
+   _literal_ string elsewhere plausibly names a candidate dead file or export
    (matched against its path or basename, with a 4-character floor to avoid
    matching on short, generic names), the finding is downgraded from
    `dead-file`/`dead-export` to **`uncertain-file`/`uncertain-export`**.
@@ -247,7 +247,7 @@ checks. `dup-audit`'s `deadcode` detector follows that same model.
   `deadcode.ignore`.
 - **CSS/SQL reachability.** Only script files get graph-based reachability.
   A CSS rule that's never referenced by any class name in markup, or a SQL
-  object nothing calls, is a *different*, much harder problem (it needs
+  object nothing calls, is a _different_, much harder problem (it needs
   cross-referencing against markup/templates or a database's own dependency
   graph) and isn't attempted here — same "explicitly out of scope, not
   silently wrong" stance as Type‑4 clones.
@@ -282,7 +282,7 @@ practice rather than picked arbitrarily:
   class in real-world use — entity/DTO classes and accessor boilerplate.
 
 The README is explicit that none of this guarantees zero false positives,
-since some identical-looking code is *intentionally* identical (see
+since some identical-looking code is _intentionally_ identical (see
 Limitations below); the thresholds are tuned to keep false positives rare,
 and the `calibrate` command measures where a given codebase actually lands.
 
@@ -349,6 +349,7 @@ and the `calibrate` command measures where a given codebase actually lands.
 Use this as a quick "will this get flagged, and why" reference.
 
 **Before anything is compared:**
+
 - [ ] File is tracked by git and not excluded by `.gitignore` or the
       `ignore` config globs (`node_modules`, `dist`, `build`, `coverage`,
       `*.min.*`, `*.d.ts`, `*.generated.*`, `*.test.*`, `*.spec.*`,
@@ -358,6 +359,7 @@ Use this as a quick "will this get flagged, and why" reference.
       listed in `report.failures`, never silently skipped)
 
 **For a function/method to be eligible for `structure` (Type‑1/2/3):**
+
 - [ ] It's a function declaration, method, constructor, accessor, or a
       named arrow/function expression (inline callbacks don't count as
       their own unit)
@@ -374,6 +376,7 @@ Use this as a quick "will this get flagged, and why" reference.
       not hidden
 
 **For a CSS rule to be eligible for `css`:**
+
 - [ ] It has at least the minimum number of declarations (default 3)
 - [ ] Its normalized, sorted declaration set matches another rule's,
       **within the same at-rule context** (e.g. same `@media` block)
@@ -381,6 +384,7 @@ Use this as a quick "will this get flagged, and why" reference.
       threshold (default 0.85)
 
 **For a `tokens` match:**
+
 - [ ] File extension is in `tokens.extensions`
 - [ ] File path has no glob-special characters (otherwise it's excluded and
       reported as uncovered by this detector)
@@ -390,19 +394,21 @@ Use this as a quick "will this get flagged, and why" reference.
       covering the same two locations
 
 **For a file or export to be eligible for `deadcode`:**
+
 - [ ] It's a script file (`.ts`/`.tsx`/`.js`/`.jsx` and `m`/`c` variants) — CSS/SQL are out of scope for this detector
 - [ ] It is not itself a resolved entry point (`package.json` fields or scripts, `deadcode.entry`, a conventional root/`src` `index`/`main`/`cli` file, or a framework convention — always listed in the run's notes) and not a tool-owned file (`*.config.*`, `.*rc.*`, dot-directories)
-- [ ] No search from any entry point, over the whole import/require/dynamic-import/re-export graph, ever reaches it — reachability *through* another file only counts if that other file is itself reachable
-- [ ] For an export specifically: no file that *is* reachable imports that name (by name, by namespace, or via a re-export)
+- [ ] No search from any entry point, over the whole import/require/dynamic-import/re-export graph, ever reaches it — reachability _through_ another file only counts if that other file is itself reachable
+- [ ] For an export specifically: no file that _is_ reachable imports that name (by name, by namespace, or via a re-export)
 - [ ] It is downgraded to `uncertain` rather than `dead` if a computed (`require(x)`, `import(`${x}`)`) reference exists anywhere and a literal string elsewhere plausibly names it — `uncertain` findings are reported but never gate the build
 
 **Before trusting a "clean" (no-flags) report:**
+
 - [ ] Confirm `gates.coverage` actually passed — a low-coverage run can be
       "clean" simply because little code was examined
 - [ ] Remember Type‑4 clones (same behavior, different code) are never
       detected by this tool, by design
 - [ ] Remember intentionally-identical code (unexcluded generated code,
-      parallel DTO/entity classes, license headers) *will* still be
+      parallel DTO/entity classes, license headers) _will_ still be
       flagged — the size floor and ignore list filter the common cases, but
       not all of them; this needs human judgment
 - [ ] Remember PL/pgSQL only gets token-level (verbatim) matching, not
@@ -445,21 +451,21 @@ Use this as a quick "will this get flagged, and why" reference.
 
 ## 7. Configuration surface (all optional, all validated)
 
-| Key | Default | Governs |
-|-----|---------|---------|
-| `detectors` | `["tokens","structure","css"]` | which detectors run |
-| `ignore` | see checklist above | git pathspec globs excluded from the audit |
-| `codeExtensions` | 15 extensions (ts/js family, css/scss/less, sql, html, vue, svelte) | denominator for the coverage gate |
-| `gates.minCoveragePercent` | `90` | coverage gate |
-| `gates.maxDuplicationPercent` | `5` | duplication gate |
-| `tokens.extensions` / `minTokens` / `minLines` | see above | `tokens` detector |
-| `structure.minNodes` / `minLines` / `similarity` / `maxTedNodes` / `candidateJaccard` / `maxPosting` | see above | `structure` detector |
-| `css.minDeclarations` / `similarity` | `3` / `0.85` | `css` detector |
-| `deadcode.entry` | `[]` (auto-detect) | glob patterns for the program's real entry points |
-| `deadcode.ignore` | `[]` | extra globs this detector should never flag |
-| `deadcode.treatTestsAsEntry` | `false` | also treat audited test-like files as entry points |
-| `gates.deadCode.enabled` / `maxFiles` | `false` / `0` | opt-in gate on high-confidence `dead-file` count only |
-| `baseline.enabled` | `false` | whether the duplication gate is evaluated against `baseline.json` only |
+| Key                                                                                                  | Default                                                             | Governs                                                                |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `detectors`                                                                                          | `["tokens","structure","css"]`                                      | which detectors run                                                    |
+| `ignore`                                                                                             | see checklist above                                                 | git pathspec globs excluded from the audit                             |
+| `codeExtensions`                                                                                     | 15 extensions (ts/js family, css/scss/less, sql, html, vue, svelte) | denominator for the coverage gate                                      |
+| `gates.minCoveragePercent`                                                                           | `90`                                                                | coverage gate                                                          |
+| `gates.maxDuplicationPercent`                                                                        | `5`                                                                 | duplication gate                                                       |
+| `tokens.extensions` / `minTokens` / `minLines`                                                       | see above                                                           | `tokens` detector                                                      |
+| `structure.minNodes` / `minLines` / `similarity` / `maxTedNodes` / `candidateJaccard` / `maxPosting` | see above                                                           | `structure` detector                                                   |
+| `css.minDeclarations` / `similarity`                                                                 | `3` / `0.85`                                                        | `css` detector                                                         |
+| `deadcode.entry`                                                                                     | `[]` (auto-detect)                                                  | glob patterns for the program's real entry points                      |
+| `deadcode.ignore`                                                                                    | `[]`                                                                | extra globs this detector should never flag                            |
+| `deadcode.treatTestsAsEntry`                                                                         | `false`                                                             | also treat audited test-like files as entry points                     |
+| `gates.deadCode.enabled` / `maxFiles`                                                                | `false` / `0`                                                       | opt-in gate on high-confidence `dead-file` count only                  |
+| `baseline.enabled`                                                                                   | `false`                                                             | whether the duplication gate is evaluated against `baseline.json` only |
 
 Unknown keys in `dup-audit.config.json` are rejected outright (not ignored),
 specifically so a typo can't silently disable a check.

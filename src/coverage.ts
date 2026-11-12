@@ -1,4 +1,4 @@
-import type { SourceFile } from './types.js';
+import type { SourceFile } from "./types.js";
 
 export interface Coverage {
   percent: number;
@@ -8,7 +8,10 @@ export interface Coverage {
   uncoveredLinesByExtension: Record<string, number>;
 }
 
-export function computeCoverage(files: readonly SourceFile[], analyzed: ReadonlySet<string>): Coverage {
+export function computeCoverage(
+  files: readonly SourceFile[],
+  analyzed: ReadonlySet<string>,
+): Coverage {
   let coveredLines = 0;
   let totalLines = 0;
   const uncoveredLinesByExtension: Record<string, number> = {};
@@ -18,7 +21,8 @@ export function computeCoverage(files: readonly SourceFile[], analyzed: Readonly
     if (analyzed.has(file.path)) {
       coveredLines += file.lines;
     } else {
-      uncoveredLinesByExtension[file.ext] = (uncoveredLinesByExtension[file.ext] ?? 0) + file.lines;
+      uncoveredLinesByExtension[file.ext] =
+        (uncoveredLinesByExtension[file.ext] ?? 0) + file.lines;
     }
   }
 

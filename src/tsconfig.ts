@@ -1,12 +1,18 @@
-import path from 'node:path';
-import ts from 'typescript';
+import path from "node:path";
+import ts from "typescript";
 
-const TSCONFIG_FILE = 'tsconfig.json';
+const TSCONFIG_FILE = "tsconfig.json";
 
 /** Directory names a build conventionally writes to, used when no tsconfig says where compiled output goes. */
-export const CONVENTIONAL_OUTPUT_DIRS: readonly string[] = ['dist', 'build', 'lib', 'out'];
+export const CONVENTIONAL_OUTPUT_DIRS: readonly string[] = [
+  "dist",
+  "build",
+  "lib",
+  "out",
+];
 
-export const toPosix = (value: string): string => value.split(path.sep).join('/');
+export const toPosix = (value: string): string =>
+  value.split(path.sep).join("/");
 
 /**
  * Compiler options used to resolve imports the way the project's own build does: `paths`, `baseUrl`,
@@ -19,7 +25,13 @@ export function loadCompilerOptions(root: string): ts.CompilerOptions {
   const configPath = path.join(root, TSCONFIG_FILE);
   const { config } = ts.readConfigFile(configPath, ts.sys.readFile);
   // readDirectory is stubbed out: only the options are wanted, not the list of files the config includes.
-  const parsed = ts.parseJsonConfigFileContent(config ?? {}, { ...ts.sys, readDirectory: () => [] }, root, undefined, configPath);
+  const parsed = ts.parseJsonConfigFileContent(
+    config ?? {},
+    { ...ts.sys, readDirectory: () => [] },
+    root,
+    undefined,
+    configPath,
+  );
   return {
     ...parsed.options,
     allowJs: true,

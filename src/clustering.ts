@@ -1,5 +1,5 @@
-import { findCandidatePairs, type CandidateOptions } from './candidates.js';
-import type { CloneKind } from './types.js';
+import { findCandidatePairs, type CandidateOptions } from "./candidates.js";
+import type { CloneKind } from "./types.js";
 
 export interface ClusterInput<T> {
   units: readonly T[];
@@ -70,11 +70,18 @@ export function clusterUnits<T>(input: ClusterInput<T>): UnitCluster<T>[] {
 
   const sets = new DisjointSet(groups.length);
   const edges: Edge[] = [];
-  const pairs = findCandidatePairs(representatives.map(input.features), input.candidates);
+  const pairs = findCandidatePairs(
+    representatives.map(input.features),
+    input.candidates,
+  );
   for (const { a, b, jaccard } of pairs) {
     const left = representatives[a];
     const right = representatives[b];
-    if (input.upperBound !== undefined && input.upperBound(left, right) < input.threshold) continue;
+    if (
+      input.upperBound !== undefined &&
+      input.upperBound(left, right) < input.threshold
+    )
+      continue;
     const similarity = input.similarity(left, right, jaccard);
     if (similarity < input.threshold) continue;
     edges.push({ a, b, similarity });
@@ -91,7 +98,10 @@ export function clusterUnits<T>(input: ClusterInput<T>): UnitCluster<T>[] {
   const componentSimilarity = new Map<number, number>();
   for (const { a, similarity } of edges) {
     const root = sets.find(a);
-    componentSimilarity.set(root, Math.min(componentSimilarity.get(root) ?? 1, similarity));
+    componentSimilarity.set(
+      root,
+      Math.min(componentSimilarity.get(root) ?? 1, similarity),
+    );
   }
 
   const clusters: UnitCluster<T>[] = [];
@@ -100,11 +110,15 @@ export function clusterUnits<T>(input: ClusterInput<T>): UnitCluster<T>[] {
     if (members.length < 2) continue;
     const singleGroup = groupIndexes.length === 1;
     const kind: CloneKind = !singleGroup
-      ? 'near-miss'
+      ? "near-miss"
       : new Set(members.map(input.rawKey)).size === 1
-        ? 'identical'
-        : 'normalized';
-    clusters.push({ members, kind, similarity: singleGroup ? 1 : (componentSimilarity.get(root) ?? 1) });
+        ? "identical"
+        : "normalized";
+    clusters.push({
+      members,
+      kind,
+      similarity: singleGroup ? 1 : (componentSimilarity.get(root) ?? 1),
+    });
   }
   return clusters;
 }

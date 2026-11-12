@@ -1,22 +1,27 @@
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-import { after } from 'node:test';
-import { DEFAULT_CONFIG, type Config } from '../src/config.js';
-import { createDeadCodeDetector } from '../src/detectors/deadcode.js';
-import { collectInventory, countLines } from '../src/inventory.js';
-import type { DetectorResult, SourceFile } from '../src/types.js';
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { after } from "node:test";
+import { DEFAULT_CONFIG, type Config } from "../src/config.js";
+import { createDeadCodeDetector } from "../src/detectors/deadcode.js";
+import { collectInventory, countLines } from "../src/inventory.js";
+import type { DetectorResult, SourceFile } from "../src/types.js";
 
 export function sourceFile(filePath: string, text: string): SourceFile {
-  return { path: filePath, ext: path.extname(filePath).toLowerCase(), text, lines: countLines(text) };
+  return {
+    path: filePath,
+    ext: path.extname(filePath).toLowerCase(),
+    text,
+    lines: countLines(text),
+  };
 }
 
 /** Creates a git repository in a temp directory that is removed when the calling test file finishes. */
 export function makeRepo(files: Record<string, string>): string {
-  const root = mkdtempSync(path.join(tmpdir(), 'dup-audit-'));
+  const root = mkdtempSync(path.join(tmpdir(), "dup-audit-"));
   after(() => rmSync(root, { recursive: true, force: true }));
-  execFileSync('git', ['init', '--quiet'], { cwd: root });
+  execFileSync("git", ["init", "--quiet"], { cwd: root });
   for (const [relativePath, text] of Object.entries(files)) {
     const target = path.join(root, relativePath);
     mkdirSync(path.dirname(target), { recursive: true });
@@ -31,12 +36,18 @@ export function makeRepo(files: Record<string, string>): string {
  */
 export async function detectDeadCode(
   files: Record<string, string>,
-  overrides: Partial<Config['deadcode']> = {},
+  overrides: Partial<Config["deadcode"]> = {},
 ): Promise<DetectorResult> {
   const root = makeRepo(files);
-  const config: Config = { ...structuredClone(DEFAULT_CONFIG), deadcode: { ...DEFAULT_CONFIG.deadcode, ...overrides } };
+  const config: Config = {
+    ...structuredClone(DEFAULT_CONFIG),
+    deadcode: { ...DEFAULT_CONFIG.deadcode, ...overrides },
+  };
   const inventory = await collectInventory(root, config);
-  return createDeadCodeDetector(root, config.deadcode).run(inventory.files, inventory.excludedFiles);
+  return createDeadCodeDetector(root, config.deadcode).run(
+    inventory.files,
+    inventory.excludedFiles,
+  );
 }
 
 export const ORDER_TOTAL = `export function computeTotal(items: Item[], taxRate: number): number {

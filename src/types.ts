@@ -1,4 +1,4 @@
-export type DetectorId = 'tokens' | 'structure' | 'css' | 'deadcode';
+export type DetectorId = "tokens" | "structure" | "css" | "deadcode";
 
 /**
  * identical  - same content apart from whitespace and comments
@@ -6,7 +6,7 @@ export type DetectorId = 'tokens' | 'structure' | 'css' | 'deadcode';
  *              scripts; declaration order and casing in CSS)
  * near-miss  - copied then modified, confirmed above the configured similarity
  */
-export type CloneKind = 'identical' | 'normalized' | 'near-miss';
+export type CloneKind = "identical" | "normalized" | "near-miss";
 
 export interface Location {
   path: string;
@@ -33,7 +33,8 @@ export interface CloneCluster {
  *                    somewhere in the codebase, or a string literal resembling this file's path, means the
  *                    real reference graph is not fully statically known; reported, but never gates the build
  */
-export type DeadCodeKind = 'dead-file' | 'dead-export' | 'uncertain-file' | 'uncertain-export';
+export type DeadCodeKind =
+  "dead-file" | "dead-export" | "uncertain-file" | "uncertain-export";
 
 export interface DeadCodeFinding {
   kind: DeadCodeKind;
@@ -69,5 +70,8 @@ export interface DetectorResult {
 export interface Detector {
   id: DetectorId;
   /** excludedFiles: files the shared `ignore` list removed before `files` was built (e.g. test files) - already read once by collectInventory, so a detector that needs them (deadcode's entry points) doesn't have to re-scan. */
-  run(files: readonly SourceFile[], excludedFiles?: readonly SourceFile[]): Promise<DetectorResult>;
+  run(
+    files: readonly SourceFile[],
+    excludedFiles?: readonly SourceFile[],
+  ): Promise<DetectorResult>;
 }

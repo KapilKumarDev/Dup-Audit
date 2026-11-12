@@ -7,12 +7,12 @@ own code coverage and gates on a duplication budget.
 
 ## What it finds
 
-| Detector    | Catches                                                          | Method |
-|-------------|-------------------------------------------------------------------|--------|
-| `structure` | Type-1/2/3 clones in functions and methods (TS/TSX/JS/JSX)         | TypeScript compiler AST, normalized, confirmed with Zhang-Shasha tree edit distance |
-| `css`       | Duplicate or near-duplicate CSS rules, any declaration order       | PostCSS, normalized declaration sets, Jaccard similarity |
-| `tokens`    | Verbatim duplication in any configured extension (incl. `.sql`)    | jscpd |
-| `deadcode`  | Files and exports unreachable from any real entry point (TS/TSX/JS/JSX) | Whole-program import graph, reachability from entry points (mark-and-sweep) |
+| Detector    | Catches                                                                 | Method                                                                              |
+| ----------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `structure` | Type-1/2/3 clones in functions and methods (TS/TSX/JS/JSX)              | TypeScript compiler AST, normalized, confirmed with Zhang-Shasha tree edit distance |
+| `css`       | Duplicate or near-duplicate CSS rules, any declaration order            | PostCSS, normalized declaration sets, Jaccard similarity                            |
+| `tokens`    | Verbatim duplication in any configured extension (incl. `.sql`)         | jscpd                                                                               |
+| `deadcode`  | Files and exports unreachable from any real entry point (TS/TSX/JS/JSX) | Whole-program import graph, reachability from entry points (mark-and-sweep)         |
 
 `deadcode` isn't a duplication detector — it doesn't compare code against
 other code, it asks "does anything alive actually reach this?" See
@@ -66,7 +66,7 @@ entry points instead. `deadcode` follows the same model:
    TypeScript's own module resolver over your `tsconfig.json` (`paths`
    aliases like `@/lib/x`, `baseUrl`, `extends`, extensionless imports,
    `.js`-written/`.ts`-compiled NodeNext style, directory `index` files).
-2. Resolve real entry points — files that *run*, not just get imported. An
+2. Resolve real entry points — files that _run_, not just get imported. An
    explicit `deadcode.entry` glob list replaces the automatic sources;
    otherwise all of these are added together: `package.json`'s
    `main`/`module`/`browser`/`bin`/`exports` (mapped back from compiled
@@ -81,10 +81,10 @@ entry points instead. `deadcode` follows the same model:
    is how live code gets flagged as dead, so nothing is assumed silently — if
    no program entry resolves, it reports nothing and says so.
 3. Search from those entry points only, over the whole graph.
-   A file only reachable *through* another unreachable file is still
+   A file only reachable _through_ another unreachable file is still
    unreachable — this is what fixes the `dead.ts`/`helper.ts` case above.
 4. Anything the search never reaches is a **dead file**. For files it does
-   reach, any exported name that no *reachable* importer ever asks for is a
+   reach, any exported name that no _reachable_ importer ever asks for is a
    **dead export** (an import written inside a dead file doesn't count as
    usage, which is what keeps step 3's fix from being undone here).
 5. A computed reference (`require(pluginPath)`) can't be resolved
@@ -175,7 +175,7 @@ thresholds):
    and reports what fraction of each mutation type the `structure` detector
    still catches (recall).
 2. It also writes `precision-sample.md`: a random sample of clusters found in
-   your *unmodified* code, each with a checkbox. Reviewing that once gives
+   your _unmodified_ code, each with a checkbox. Reviewing that once gives
    you a measured precision number for your codebase (true duplicates ÷
    reviewed).
 
@@ -256,7 +256,7 @@ detector, examined its text.
   cross-referencing against markup/templates or a database's own dependency
   graph, a different problem from import-graph reachability.
 - **Test files are entry points by default** (`deadcode.treatTestsAsEntry`),
-  so code exercised only by a test suite and never by shipped code is *not*
+  so code exercised only by a test suite and never by shipped code is _not_
   flagged. Set it to `false` for a stricter analysis; expect more findings
   that need a human look before deleting anything.
 - **A wrong `deadcode.entry`** is the one way this detector can flag real,

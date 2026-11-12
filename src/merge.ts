@@ -1,5 +1,5 @@
-import { compareLocations, contains } from './locations.js';
-import type { CloneCluster, Location } from './types.js';
+import { compareLocations, contains } from "./locations.js";
+import type { CloneCluster, Location } from "./types.js";
 
 interface Member {
   cluster: number;
@@ -25,20 +25,28 @@ export function dropExplainedPairs(
     });
   });
   const enclosing = (inner: Location): Member[] =>
-    (membersByPath.get(inner.path) ?? []).filter((entry) => contains(entry.location, inner));
+    (membersByPath.get(inner.path) ?? []).filter((entry) =>
+      contains(entry.location, inner),
+    );
 
   return pairs.filter((pair) => {
     if (pair.locations.length !== 2) return true;
     const [first, second] = pair.locations.map(enclosing);
-    return !first.some((a) => second.some((b) => a.cluster === b.cluster && a.member !== b.member));
+    return !first.some((a) =>
+      second.some((b) => a.cluster === b.cluster && a.member !== b.member),
+    );
   });
 }
 
 /** Lines that would disappear if every cluster kept a single copy, without counting a line twice. */
-export function countDuplicatedLines(clusters: readonly CloneCluster[]): number {
+export function countDuplicatedLines(
+  clusters: readonly CloneCluster[],
+): number {
   const spansByPath = new Map<string, [start: number, end: number][]>();
   for (const cluster of clusters) {
-    for (const { path, startLine, endLine } of [...cluster.locations].sort(compareLocations).slice(1)) {
+    for (const { path, startLine, endLine } of [...cluster.locations]
+      .sort(compareLocations)
+      .slice(1)) {
       const spans = spansByPath.get(path);
       if (spans === undefined) spansByPath.set(path, [[startLine, endLine]]);
       else spans.push([startLine, endLine]);

@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-import { mkdir, writeFile } from 'node:fs/promises';
-import path from 'node:path';
-import { parseArgs } from 'node:util';
-import { BASELINE_FILE, buildBaseline } from './baseline.js';
-import { formatCalibration, runCalibration } from './calibrate.js';
-import { loadConfig } from './config.js';
-import { runAudit } from './pipeline.js';
-import { formatSummary, toSarif } from './report.js';
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { parseArgs } from "node:util";
+import { BASELINE_FILE, buildBaseline } from "./baseline.js";
+import { formatCalibration, runCalibration } from "./calibrate.js";
+import { loadConfig } from "./config.js";
+import { runAudit } from "./pipeline.js";
+import { formatSummary, toSarif } from "./report.js";
 
 const USAGE = `Usage:
   dup-audit [root] [--config <file>] [--out <dir>] [--min-lines <n>]
@@ -25,13 +25,19 @@ baseline records every cluster found right now into <out>/baseline.json; with ba
 dup-audit.config.json, later audits gate only on duplication not already in that file. Re-run baseline
 after deliberately accepting or fixing duplication so the file keeps matching intent.`;
 
-const CALIBRATE = 'calibrate';
-const BASELINE = 'baseline';
+const CALIBRATE = "calibrate";
+const BASELINE = "baseline";
 
-function integerOption(value: string | undefined, name: string, fallback: number, min = 1): number {
+function integerOption(
+  value: string | undefined,
+  name: string,
+  fallback: number,
+  min = 1,
+): number {
   if (value === undefined) return fallback;
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < min) throw new Error(`--${name} must be an integer of at least ${min}`);
+  if (!Number.isInteger(parsed) || parsed < min)
+    throw new Error(`--${name} must be an integer of at least ${min}`);
   return parsed;
 }
 
@@ -40,13 +46,13 @@ async function main(argv: string[]): Promise<number> {
     args: argv,
     allowPositionals: true,
     options: {
-      config: { type: 'string' },
-      out: { type: 'string' },
-      'min-lines': { type: 'string' },
-      samples: { type: 'string' },
-      'precision-samples': { type: 'string' },
-      seed: { type: 'string' },
-      help: { type: 'boolean', short: 'h' },
+      config: { type: "string" },
+      out: { type: "string" },
+      "min-lines": { type: "string" },
+      samples: { type: "string" },
+      "precision-samples": { type: "string" },
+      seed: { type: "string" },
+      help: { type: "boolean", short: "h" },
     },
   });
   if (values.help) {
@@ -54,29 +60,47 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
-  const command = positionals[0] === CALIBRATE || positionals[0] === BASELINE ? positionals[0] : undefined;
+  const command =
+    positionals[0] === CALIBRATE || positionals[0] === BASELINE
+      ? positionals[0]
+      : undefined;
   const rest = command === undefined ? positionals : positionals.slice(1);
-  if (rest.length > 1) throw new Error(`Expected at most one root directory.\n\n${USAGE}`);
+  if (rest.length > 1)
+    throw new Error(`Expected at most one root directory.\n\n${USAGE}`);
 
-  const root = path.resolve(rest[0] ?? '.');
+  const root = path.resolve(rest[0] ?? ".");
   const config = await loadConfig(root, values.config);
-  if (values['min-lines'] !== undefined) {
-    const minLines = integerOption(values['min-lines'], 'min-lines', config.structure.minLines);
+  if (values["min-lines"] !== undefined) {
+    const minLines = integerOption(
+      values["min-lines"],
+      "min-lines",
+      config.structure.minLines,
+    );
     config.tokens.minLines = minLines;
     config.structure.minLines = minLines;
   }
-  const outputDir = path.resolve(values.out ?? path.join(root, '.dup-audit'));
+  const outputDir = path.resolve(values.out ?? path.join(root, ".dup-audit"));
   await mkdir(outputDir, { recursive: true });
 
   if (command === CALIBRATE) {
     const result = await runCalibration(root, config, {
-      samples: integerOption(values.samples, 'samples', 200),
-      precisionSamples: integerOption(values['precision-samples'], 'precision-samples', 50),
-      seed: integerOption(values.seed, 'seed', 1, 0),
+      samples: integerOption(values.samples, "samples", 200),
+      precisionSamples: integerOption(
+        values["precision-samples"],
+        "precision-samples",
+        50,
+      ),
+      seed: integerOption(values.seed, "seed", 1, 0),
     });
     const { precisionSampleMarkdown, ...summary } = result;
-    await writeFile(path.join(outputDir, 'calibration.json'), `${JSON.stringify(summary, null, 2)}\n`);
-    await writeFile(path.join(outputDir, 'precision-sample.md'), precisionSampleMarkdown);
+    await writeFile(
+      path.join(outputDir, "calibration.json"),
+      `${JSON.stringify(summary, null, 2)}\n`,
+    );
+    await writeFile(
+      path.join(outputDir, "precision-sample.md"),
+      precisionSampleMarkdown,
+    );
     console.log(formatCalibration(result, outputDir));
     return 0;
   }
@@ -86,7 +110,10 @@ async function main(argv: string[]): Promise<number> {
     // current cluster regardless of whether config.baseline.enabled is already on.
     const { report, files } = await runAudit(root, config, { outputDir });
     const baseline = buildBaseline(report.clusters, files);
-    await writeFile(path.join(outputDir, BASELINE_FILE), `${JSON.stringify(baseline, null, 2)}\n`);
+    await writeFile(
+      path.join(outputDir, BASELINE_FILE),
+      `${JSON.stringify(baseline, null, 2)}\n`,
+    );
     console.log(
       `dup-audit baseline: recorded ${baseline.fingerprints.length} cluster(s) to ${path.join(outputDir, BASELINE_FILE)}`,
     );
@@ -94,8 +121,14 @@ async function main(argv: string[]): Promise<number> {
   }
 
   const { report, passed } = await runAudit(root, config, { outputDir });
-  await writeFile(path.join(outputDir, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
-  await writeFile(path.join(outputDir, 'report.sarif'), `${JSON.stringify(toSarif(report), null, 2)}\n`);
+  await writeFile(
+    path.join(outputDir, "report.json"),
+    `${JSON.stringify(report, null, 2)}\n`,
+  );
+  await writeFile(
+    path.join(outputDir, "report.sarif"),
+    `${JSON.stringify(toSarif(report), null, 2)}\n`,
+  );
   console.log(formatSummary(report, outputDir));
   return passed ? 0 : 1;
 }
@@ -105,7 +138,9 @@ main(process.argv.slice(2)).then(
     process.exitCode = code;
   },
   (error: unknown) => {
-    console.error(`dup-audit: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `dup-audit: ${error instanceof Error ? error.message : String(error)}`,
+    );
     process.exitCode = 2;
   },
 );
