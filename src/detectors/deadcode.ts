@@ -36,10 +36,17 @@ function mentionSources(
   graph: ModuleGraph,
   templates: readonly SourceFile[],
 ): MentionSource[] {
+  // A plain string like "neo-brutalist" in a script only hints at a dynamic load if some computed
+  // import()/require() exists to do the loading; without one, every import is already an edge.
+  const hasComputedReference = [...graph.nodes.values()].some(
+    (node) => node.dynamicSpecifiers.length > 0,
+  );
   return [
     ...[...graph.nodes].map(([path, node]) => ({
       path,
-      texts: [...node.dynamicSpecifiers, ...node.stringLiterals],
+      texts: hasComputedReference
+        ? [...node.dynamicSpecifiers, ...node.stringLiterals]
+        : [],
     })),
     ...templates.map((file) => ({ path: file.path, texts: [file.text] })),
   ];

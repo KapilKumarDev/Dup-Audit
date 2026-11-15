@@ -70,6 +70,14 @@ function createResolver(
     (fileName) => fileName,
     options,
   );
+  // TypeScript's resolver only knows script extensions, so `import "./x.css"` never resolves through it.
+  // ponytail: relative `.css` specifiers only; tsconfig `paths` aliases to CSS and scss/less partials aren't followed.
+  const relativeCss = (from: string, specifier: string): string | undefined => {
+    if (!specifier.startsWith(".") || !specifier.endsWith(".css"))
+      return undefined;
+    const target = path.posix.join(path.posix.dirname(from), specifier);
+    return known.has(target) ? target : undefined;
+  };
   return (from, specifier) => {
     const { resolvedModule } = ts.resolveModuleName(
       specifier,
@@ -78,11 +86,8 @@ function createResolver(
       host,
       cache,
     );
-    if (
-      resolvedModule === undefined ||
-      resolvedModule.isExternalLibraryImport === true
-    )
-      return undefined;
+    if (resolvedModule === undefined) return relativeCss(from, specifier);
+    if (resolvedModule.isExternalLibraryImport === true) return undefined;
     const resolved = toRelative(resolvedModule.resolvedFileName);
     return known.has(resolved) ? resolved : undefined;
   };
@@ -303,7 +308,31 @@ function extractFile(sourceFile: ts.SourceFile): FileExtraction {
   };
 }
 
-/** Builds the whole-program import graph for every TS/JS file among `files`; other extensions are ignored. */
+const CSS_IMPORT = /@import\s+(?:url\(\s*)?["']([^"']+)["']/g;
+
+/** A CSS file's only edges are its `@import`s; a bare `@import "x.css"` is relative, unlike a JS specifier. */
+function extractCss(text: string): FileExtraction {
+  const specifiers = [
+    ...text.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(CSS_IMPORT),
+  ].map(([, specifier]) =>
+    /^(\.|\/|[a-z][a-z0-9+.-]*:)/i.test(specifier)
+      ? specifier
+      : `./${specifier}`,
+  );
+  return {
+    rawEdges: specifiers.map((specifier) => ({
+      specifier,
+      kind: "import",
+      names: [],
+    })),
+    dynamicSpecifiers: [],
+    exports: new Map(),
+    stringLiterals: [],
+    identifierCounts: new Map(),
+  };
+}
+
+/** Builds the whole-program import graph for every TS/JS and CSS file among `files`; other extensions are ignored. */
 export function buildModuleGraph(
   files: readonly SourceFile[],
   resolution: ResolutionContext,
@@ -312,6 +341,10 @@ export function buildModuleGraph(
   const resolve = createResolver(known, resolution);
   const extractions = new Map<string, FileExtraction>();
   for (const file of files) {
+    if (file.ext === ".css") {
+      extractions.set(file.path, extractCss(file.text));
+      continue;
+    }
     const sourceFile = parse(file);
     if (sourceFile !== undefined)
       extractions.set(file.path, extractFile(sourceFile));

@@ -97,8 +97,10 @@ those mention by name is reported as `uncertain-*` rather than dead.
 
 Known scope boundaries: only the root `package.json` and `tsconfig.json` are
 read (monorepo workspace packages need their entries in `deadcode.entry`);
-only script files get reachability (CSS/SQL aren't
-attempted — a different, harder problem); and `import * as ns` conservatively marks
+only script and `.css` files get reachability (a CSS
+file is reached by a relative `import "./x.css"`, `import("./x.css")` or another reached CSS file's
+`@import`; `.scss`/`.less`/SQL aren't attempted, and a CSS file linked only from HTML is reported as
+`uncertain-file`); and `import * as ns` conservatively marks
 every export of its target as used rather than tracking which property is
 actually read off `ns`, trading a few missed dead exports for zero false
 positives on that path.

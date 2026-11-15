@@ -55,6 +55,36 @@ describe("deadcode detector", () => {
     assert.deepEqual(flagged, ["a.ts", "b.ts"]);
   });
 
+  it("flags an unreachable file as dead when a plain string names it but no computed import exists", async () => {
+    const { deadCode } = await run({
+      "entry.ts": `export const old = "gone";\nexport const theme = "gone";\n`,
+      "gone.css": `.g { color: red; }\n`,
+    });
+    assert.equal(deadCode[0]?.kind, "dead-file");
+  });
+
+  it("follows CSS imports and @import chains, and flags CSS nothing reaches", async () => {
+    const { deadCode } = await run({
+      "entry.ts": `import './a.css';\nimport('./themes/light.css');\n`,
+      "a.css": `/* @import "./commented.css"; */\n@import "./b.css";\n@import url("./c.css") layer(base);\n`,
+      "b.css": `.b { color: red; }\n`,
+      "c.css": `.c { color: red; }\n`,
+      "themes/light.css": `.l { color: red; }\n`,
+      "commented.css": `.x { color: red; }\n`,
+      "dead.css": `@import "./only-from-dead.css";\n`,
+      "only-from-dead.css": `.d { color: red; }\n`,
+    });
+    const flagged = deadCode
+      .filter((f) => f.kind === "dead-file")
+      .map((f) => f.location.path)
+      .sort();
+    assert.deepEqual(flagged, [
+      "commented.css",
+      "dead.css",
+      "only-from-dead.css",
+    ]);
+  });
+
   it("flags an unused named export in a file that is otherwise reachable", async () => {
     const { deadCode } = await run({
       "entry.ts": `import { used } from './lib.js';\nused();\n`,
